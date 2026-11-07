@@ -1,241 +1,244 @@
-﻿# AgentX
+# AgentX — Autonomous AI Research & Intelligence Platform
 
-AgentX is an autonomous AI research and intelligence platform designed to combine web research, PDF question answering, CSV analysis, evidence verification, and report generation in one traceable workflow.
+AgentX is a local-first research assistant that combines web-source synthesis and question answering over uploaded PDFs in one evidence-aware workflow. A Streamlit dashboard lets users submit a question, inspect the retrieved evidence and verification results, and download a generated Markdown report as PDF.
 
-## Project status
+> **Project focus:** modular agents, traceable evidence, local inference, and explicit uncertainty.
 
-This repository contains the project foundation, hybrid LLM gateway, research workflow, PDF ingestion, local embeddings, persistent vector storage, semantic retrieval, PDF RAG answer generation, and an initial LangGraph orchestration foundation. Further integrations will be added milestone by milestone.
+## Problem
+
+Research often involves gathering information from several sources, comparing it with existing documents, checking citations, and preparing a readable report. These steps can be time-consuming, and generated summaries can obscure whether their references actually support their claims.
+
+AgentX brings those steps into a single workflow. It keeps retrieved web snippets and PDF passages with their source metadata, checks citations against available evidence, and marks unsupported, conflicting, or inconclusive findings. Its checks are deterministic and conservative; they are designed to make evidence easier to inspect, not to certify factual truth.
+
+## Project objectives
+
+- Route a question to web research, PDF question answering, or both.
+- Reuse modular agents through a shared LangGraph state.
+- Keep source text, citations, and document metadata available through verification and reporting.
+- Run chat and embedding inference locally with Ollama by default.
+- Produce a Markdown report and a downloadable PDF.
+- Make incomplete evidence and runtime limitations visible to the user.
+
+## Features
+
+- **Multi-agent workflow:** focused Supervisor, Research, Knowledge/RAG, Verification, and Report Generator roles.
+- **Supervisor and task routing:** deterministic query classification with conditional LangGraph routes.
+- **Web research:** configurable demo fixtures by default, with an optional Tavily provider.
+- **PDF knowledge retrieval:** page-aware extraction, chunking, local embeddings, persistent ChromaDB storage, and semantic retrieval.
+- **Evidence verification:** checks source references and compares claims with preserved source text; highlights unsupported, conflicting, and insufficient evidence.
+- **Automated report generation:** deterministic Markdown assembly using findings and original source metadata.
+- **PDF export:** renders the generated Markdown report through ReportLab.
+- **Streamlit dashboard:** upload documents, select a research mode, inspect results, and download the report.
+- **Local-first model use:** Ollama chat and embeddings work without a cloud API key. Models are never downloaded automatically by AgentX.
 
 ## Architecture
 
+```mermaid
+flowchart TD
+    U[User question and optional PDF] --> UI[Streamlit dashboard]
+    UI --> RUN[End-to-end runner]
+    PDF[PDFIngestor] --> EMB[Ollama embedding service]
+    EMB --> DB[(Persistent ChromaDB)]
+    UI --> PDF
+    RUN --> SUP[Supervisor]
+    SUP -->|web_research| WEB[Research Agent]
+    SUP -->|document_qa| RAG[Knowledge / RAG Agent]
+    SUP -->|combined_research| BOTH[Combined workflow]
+    SUP -->|unknown| CLARIFY[Clarification]
+    BOTH --> WEB
+    BOTH --> RAG
+    RAG --> RET[Semantic retriever]
+    RET --> DB
+    WEB --> STATE[Shared AgentState and source_evidence]
+    RAG --> STATE
+    STATE --> VERIFY[Verification Agent]
+    VERIFY --> REPORT[Report Generator]
+    REPORT --> MD[Markdown report]
+    MD --> PDFOUT[PDFReportExporter]
+    PDFOUT --> UI
+    WEB -. local chat .-> LLM[LLM Gateway / Ollama]
+    RAG -. local chat .-> LLM
+```
+
+Web, Knowledge, and Combined routes proceed through verification and report generation. The clarification route returns a clarification status and does not generate a report. In combined mode, a failure in one agent does not discard the other agent's result.
+
+## Agent responsibilities
+
+| Agent / role | Responsibility |
+|---|---|
+| **Supervisor** | Classifies a question as web research, document QA, combined research, or unknown. It uses lightweight deterministic phrase cues and does not assume an uploaded document exists. |
+| **Research Agent** | Queries the configured web search provider, uses the existing LLM Gateway to synthesize returned sources, and returns findings with numbered citations. |
+| **Knowledge (RAG) Agent** | Embeds a question, retrieves relevant stored PDF chunks from ChromaDB, and asks the LLM Gateway for an answer grounded in those passages. |
+| **Verification Agent** | Validates citation references and checks claims against cited web snippets or retrieved PDF text. It reports supported, unsupported, conflicting, or insufficient evidence. |
+| **Report Generator** | Assembles a Markdown report from shared state, preserving the original source references and verification status. It does not call an LLM. |
+
+The Combined workflow invokes the Research and Knowledge agents with the same question, then verification and reporting run on their shared evidence. PDF rendering is handled by the existing exporter rather than a separate agent.
+
+## Technology stack
+
+- Python 3.11 or 3.12
+- LangChain and LangGraph
+- Ollama with `llama3.2:1b` for chat and `nomic-embed-text` for embeddings by default
+- Optional OpenAI provider in the shared LLM Gateway
+- ChromaDB for persistent local document vectors
+- PyMuPDF for PDF text extraction
+- ReportLab for PDF report export
+- Streamlit for the dashboard
+- `httpx` for local embedding and Tavily HTTP calls
+- Standard-library `unittest` for automated tests
+
+The end-to-end runner explicitly selects local Ollama for its workflow. The cloud gateway is an optional backend capability; the dashboard's end-to-end flow does not automatically switch to a cloud model.
+
+## Repository structure
+
 ```text
-Streamlit UI (app.py) -> existing AgentX runner
-                      |
-                      v
-             LangGraph workflow (agentx/core)
-             |-- Web research and source collection
-             |-- PDF ingestion -> ChromaDB retrieval
-             |-- CSV ingestion -> Pandas analysis
-             |-- Evidence verification and citation checks
-             `-- Report synthesis
-                      |
-                      v
-             Provider-neutral LLM gateway (agentx/llm)
-                  |-- Ollama for local inference
-                  `-- Optional OpenAI for cloud reasoning
-
-SQLite: application metadata; ChromaDB: document vectors
-Shared settings and schemas: agentx/core
+AgentX/
+├── app.py                         # Streamlit dashboard entry point
+├── .env.example                   # Configuration template; no real credentials
+├── requirements.txt
+├── agentx/
+│   ├── agents/                    # Research, RAG, verification, report agents
+│   ├── core/                      # Settings, shared state, routing, workflow, runner
+│   ├── embeddings/                # Ollama embedding service
+│   ├── ingestion/                 # PDF extraction and chunking
+│   ├── llm/                       # Provider-neutral local/cloud chat gateway
+│   ├── reports/                   # Markdown-to-PDF export
+│   ├── retrieval/                 # Semantic PDF retrieval
+│   ├── storage/                   # Persistent ChromaDB vector storage
+│   ├── tools/                     # Demo and Tavily web search providers
+│   ├── ui/                        # Testable Streamlit upload/index service
+│   ├── analysis/                   # Package scaffold; CSV analysis not connected
+│   └── api/                        # Package scaffold; no FastAPI app is wired
+├── data/                          # Local ChromaDB and uploaded PDFs (git-ignored)
+├── reports/generated/             # Generated Markdown and PDF reports
+├── scripts/                       # Component and end-to-end demos
+└── tests/                         # Unit and integration-boundary tests
 ```
 
-The gateway returns a common chat interface (`invoke` and `ainvoke`) so agents do not import provider-specific classes. It loads provider SDKs only when selected. Cloud access is optional; local Ollama mode works without an OpenAI API key.
+## Windows installation and setup
 
-### Initial LangGraph orchestration
-
-`agentx/core/state.py` defines the shared, progressively populated `AgentState`. `build_workflow()` in `agentx/core/workflow.py` starts at the supervisor, then uses conditional edges to select a route. The supervisor uses lightweight deterministic phrase cues to classify requests as `web_research`, `document_qa`, `combined_research`, or `unknown`. `agentx/core/router.py` maps those types to the `research`, `knowledge`, `combined`, or `clarification` route. The research route invokes the existing `ResearchAgent.research(query)` interface and stores its findings, summary, citations, and actual web snippets in shared state. The Knowledge route invokes the existing `RAGAgent.answer(question, document_id=...)` interface and stores its answer, retrieved PDF passage text, source metadata, and numbered citations. The Combined route runs Research first and RAG second, passing the same query and optional document ID, and stores evidence from each successful agent independently. It reports `combined_complete`, `combined_partial_success`, `combined_insufficient_evidence`, or `combined_failed` according to the outcomes. After Research, Knowledge, or Combined processing, the Verification Agent checks citation references and compares claims with preserved source text. Clarification remains unchanged. Invalid or missing task types safely use clarification.
-
-### Evidence verification
-
-`source_evidence` is a list of structured web and document records. Each record includes a workflow-unique `source_id`, source type, original citation identifier, reference (URL or document chunk), available title/file and page metadata, actual snippet or passage text, and similarity for PDF retrievals. Web snippets come from the configured search provider's results; PDF text comes from the retrieved chunks. Missing text remains missing rather than being reconstructed from generated answers. The combined path retains evidence from whichever agent succeeds.
-
-### Markdown report generation
-
-After evidence verification, the Research, Knowledge, and Combined routes pass the shared state to `ReportGenerator` in `agentx/agents/report_generator.py`. It deterministically assembles a Markdown report with the question, available web and PDF findings, verification labels, unsupported or conflicting claims, limitations, conclusion, and references. It uses only the preserved `source_evidence` records for source excerpts and citations, retaining original URLs, filenames, pages, IDs, and similarity metadata. Missing source text is called out explicitly, and generated findings without a matching original citation are not given a new citation.
-
-Report assembly does not call an LLM, so it works in local/offline mode and does not add dependencies. `final_report` contains the Markdown and `report_status` is `generated`, `insufficient_evidence`, or `error`. The Clarification route remains unchanged and does not generate a report. Verification is currently deterministic and lexical; a `supported` label is not a guarantee of semantic entailment or factual truth.
-
-### PDF report export
-
-`PDFReportExporter` in `agentx/reports/pdf_exporter.py` converts the Markdown in `final_report` to a styled PDF. It formats headings, paragraphs, lists, block quotes, and Markdown tables, and keeps report text, original URLs, citations, filenames, and page references. It does not rewrite findings or create citations. Empty reports raise a clear `ValueError`; filesystem or PDF generation failures raise `PDFExportError`.
-
-Install the added ReportLab dependency with `python -m pip install -r requirements.txt`. By default, PDFs are saved under the Git-ignored `reports/generated/` directory. Pass an optional safe filename and output directory when needed:
-
-```python
-from agentx.agents.report_generator import ReportGenerator
-from agentx.reports import PDFReportExporter
-
-report = ReportGenerator().generate(agent_state)
-pdf_path = PDFReportExporter().export(report.markdown, filename="agentx-research.pdf")
-print(pdf_path)
-```
-
-The exporter is a Markdown-to-PDF renderer; this step does not add export to the workflow or provide a command-line interface.
-
-### End-to-end workflow smoke test
-
-Run the complete local flow with one PowerShell command:
+Open PowerShell in the repository directory. Python 3.11 or 3.12 is recommended.
 
 ```powershell
-python scripts/test_end_to_end.py --question "Research recent CNN-LSTM methods and compare them with the uploaded report." --document-id YOUR_STORED_DOCUMENT_ID
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
 ```
 
-The runner validates a supplied document ID against the configured ChromaDB before using it. An explicit, available document ID routes the question through both web research and PDF RAG; without one, the existing Supervisor classification selects the appropriate route. It uses the local Ollama chat and embedding models and exports both Markdown and PDF files under `reports/generated/` unless `--report-dir` is set. `--persist-directory` can override the ChromaDB location and `--top-k` controls retrieved PDF chunks.
+If PowerShell blocks virtual-environment activation, use the Python executable directly instead:
 
-Search follows `WEB_SEARCH_PROVIDER`. Tavily is used only when selected and `TAVILY_API_KEY` is configured. If the key is missing, or a live Tavily request fails, the runner uses the repository's demo fixtures and explicitly labels the result as demo data, never live research. Keys are not printed. A RAG or Ollama failure is reported safely; the runner still saves a report when the workflow produced one, and marks the smoke command unsuccessful when an agent step recorded an error. Unit tests mock agent and storage boundaries and make no external calls.
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
 
-`agentx/agents/verification_agent.py` checks citation IDs against the correct web or document source records, then compares claims with the actual cited snippets or passages. It uses sentence-level alignment, regular inflection normalization, and a small documented alias map for common equivalents (for example, “CNN” and “convolutional neural network,” or “capture” and “extract”). Missing citations and missing source text produce `insufficient_evidence`; an invalid citation ID or unrelated available cited text is `unsupported`. `conflicting` requires a sentence aligned to the same proposition with an explicit opposite polarity or incompatible numeric value. Source references retain URLs, filenames, pages, document IDs, and chunk IDs.
+Keep `.env` private. It is ignored by Git. Leave optional provider credentials blank until you choose to configure that provider.
 
-This is deterministic lexical matching, not semantic verification. It does not call an LLM, infer arbitrary paraphrases, judge source reliability, or establish factual truth. The alias list and sentence matching can miss valid paraphrases and can still misclassify nuanced language; ambiguous cases should remain insufficient rather than be treated as confirmed. Web snippets may be short excerpts rather than full pages.
+## Ollama installation and models
 
-### Streamlit research application
+Install Ollama for Windows from [ollama.com/download](https://ollama.com/download), then open the Ollama application or start its service. Pull the two models used by default:
 
-Launch the AgentX dashboard from the repository root:
+```powershell
+ollama pull llama3.2:1b
+ollama pull nomic-embed-text
+ollama list
+```
+
+AgentX uses the chat model for synthesis and the embedding model for indexing and retrieval. It does not download either model automatically. On an 8 GB computer, keep the small chat model and embedding model configuration and avoid loading multiple large chat models at once.
+
+## Environment configuration
+
+`.env.example` documents the settings. Copy it to `.env` and edit only what you need.
+
+| Variable | Purpose | Default in template |
+|---|---|---|
+| `LLM_PROVIDER` | Shared gateway default: `ollama` or `openai` | `ollama` |
+| `OLLAMA_BASE_URL` | Local Ollama endpoint | `http://localhost:11434` |
+| `OLLAMA_MODEL` | Chat model | `llama3.2:1b` |
+| `OLLAMA_EMBEDDING_MODEL` | PDF/query embedding model | `nomic-embed-text` |
+| `OLLAMA_EMBEDDING_BATCH_SIZE` | Embedding batch size | `8` |
+| `LLM_CONNECT_TIMEOUT_SECONDS` | Connection timeout | `10` |
+| `LLM_REQUEST_TIMEOUT_SECONDS` | Request timeout | `120` |
+| `WEB_SEARCH_PROVIDER` | `demo` or `tavily` | `demo` |
+| `TAVILY_API_KEY` | Required only for configured Tavily live search | blank |
+| `OPENAI_API_KEY` | Required only when selecting OpenAI in the gateway | blank |
+| `CHROMA_PERSIST_DIRECTORY` | Persistent document vector database | `./data/chroma` |
+| `SQLITE_PATH` | Reserved application setting | `./data/agentx.sqlite3` |
+
+Demo web search is the default. Set `WEB_SEARCH_PROVIDER=tavily` and provide your own `TAVILY_API_KEY` to request live search. The application labels demo search output as demo data. Live search is not claimed unless a configured request has actually succeeded.
+
+## Launch the Streamlit dashboard
+
+From the repository root, with the virtual environment active and Ollama running:
 
 ```powershell
 python -m streamlit run app.py
 ```
 
-Enter a question and choose **Web research**, **Document only**, or **Combined research**. Document modes accept a PDF upload or a document previously indexed during the current browser session. Uploads are saved under `data/uploads/`, processed through the existing `PDFIngestor`, embedded in bounded batches with local Ollama, and upserted into the configured persistent ChromaDB. A content hash gives each PDF a stable document ID, so uploading it again updates the same chunk IDs. Document-only mode selects the Knowledge route; combined mode runs Research and RAG through the existing end-to-end runner.
+The dashboard opens in a browser. It offers **Web research**, **Document only**, and **Combined research** modes. Document modes accept a PDF upload or a document already indexed during the current browser session. Uploading extracts and chunks text, generates local embeddings, and stores the chunks in persistent ChromaDB. The same PDF content hash reuses its document ID on re-upload.
 
-The dashboard displays workflow and verification status, findings, preserved source snippets and references, the Markdown report, and a PDF download from the existing `PDFReportExporter`. Unsupported, conflicting, and insufficient evidence are highlighted. If Tavily is not configured, web search uses the repository's demo fixtures and the interface labels them as demo data. Ollama must be running with the configured chat and embedding models already installed; AgentX does not download models. Uploads are limited to 50 MB to keep memory use reasonable. The UI calls existing ingestion, storage, and workflow components and contains no duplicate agent logic.
+### Example questions
 
-## Resource strategy
+- Web: `What are recent approaches to detecting network intrusions?`
+- Document: `What methodology does this report use?`
+- Combined: `Compare the report's CNN-LSTM approach with current web research.`
 
-- Target Python 3.11 or 3.12.
-- On an 8 GB Windows machine, use a small quantized Ollama model and keep only one large model loaded at a time.
-- Route only tasks that need complex reasoning to the optional cloud provider.
-- Process PDFs and CSVs in bounded batches; avoid loading entire large corpora into memory.
-- SQLite uses Python's standard library.
+### Typical workflow
 
-## Repository layout
+1. Start Ollama and confirm both configured models are available with `ollama list`.
+2. Launch the Streamlit app.
+3. Enter a focused question and choose a mode.
+4. For Document or Combined mode, upload a text-based PDF or select a document indexed in the current session.
+5. Review route and agent status, the verification labels, and the preserved source snippets/references.
+6. Read the generated Markdown report and download its PDF if useful.
 
-```text
-agentx/
-  agents/       LangGraph workflows and agent nodes
-  analysis/     Pandas-based dataset analysis
-  api/          FastAPI routes and app assembly
-  core/         Environment settings, schemas, domain utilities
-  ingestion/    PDF and CSV loading/chunking
-  llm/          Provider-neutral local/cloud model gateway
-  reports/      Report assembly and rendering
-  retrieval/    ChromaDB indexing and retrieval
-  storage/      SQLite and persistence adapters
-tests/          Standard-library unit tests
-```
+Scanned PDFs without an embedded text layer are not OCR-processed. The dashboard's upload service limits PDFs to 50 MB.
 
-## Setup
+## Reports and command-line workflow
 
-1. Create and activate a Python 3.11 or 3.12 virtual environment.
-2. Install dependencies when implementation work begins:
-
-   ```powershell
-   python -m pip install -r requirements.txt
-   ```
-
-3. Copy `.env.example` to `.env` and configure only the providers you plan to use. Keep `.env` private; it is ignored by Git.
-4. Install and start Ollama separately if using a local model. Ollama and its model weights are not Python dependencies. The gateway does not download models.
-
-## PDF ingestion and chunking
-
-`PDFIngestor` in `agentx/ingestion/pdf_ingestion.py` uses PyMuPDF to extract text page by page and produce overlapping character chunks. The defaults are 800 characters per chunk and 150 characters of overlap; configure them with `PDFIngestor(chunk_size=..., chunk_overlap=...)`. Chunks retain a generated or caller-supplied document ID, original filename, 1-based page number, and unique chunk ID. Empty pages are skipped; invalid, unsupported, encrypted, zero-byte, or all-text-empty documents produce clear ingestion errors. Scanned-image OCR is not included.
-
-Generate a temporary sample PDF and run the ingestion demo, or pass a PDF path:
+The end-to-end runner can also run from PowerShell:
 
 ```powershell
-python scripts/test_pdf_ingestion.py
-python scripts/test_pdf_ingestion.py .\path\to\document.pdf
+python scripts/test_end_to_end.py --question "Compare recent CNN-LSTM research with the uploaded report." --document-id YOUR_STORED_DOCUMENT_ID
 ```
 
-Install project dependencies with `python -m pip install -r requirements.txt`, or install only the PDF dependency with `python -m pip install "pymupdf>=1.24,<2"`. Run PDF-specific tests with `python -m unittest discover -s tests -p "test_pdf_ingestion.py" -v`.
-## Hybrid LLM gateway configuration
-
-`Settings.from_env()` reads environment variables and loads a local `.env` through `python-dotenv` when available. `create_chat_model()` uses `LLM_PROVIDER` unless an explicit provider is passed.
-
-| Variable | Purpose | Default |
-|---|---|---|
-| `LLM_PROVIDER` | Default provider: `ollama` or `openai` | `ollama` |
-| `OLLAMA_BASE_URL` | Ollama server URL | `http://localhost:11434` |
-| `OLLAMA_MODEL` | Local model tag | `llama3.2:1b` |
-| `OPENAI_API_KEY` | Cloud API credential (required only for OpenAI) | unset |
-| `OPENAI_MODEL` | Cloud model name | `gpt-4o-mini` |
-| `LLM_CONNECT_TIMEOUT_SECONDS` | Connection timeout | `10` |
-| `LLM_REQUEST_TIMEOUT_SECONDS` | Total request timeout | `120` |
-
-Configuration errors identify invalid providers, timeouts, model settings, or a missing cloud key. OpenAI retries are capped at one retry.
-
-## Local embedding generation
-
-`OllamaEmbeddingService` in `agentx/embeddings/` accepts the existing `PDFChunk` records and calls the local Ollama `/api/embed` endpoint in bounded batches. It returns one `EmbeddedChunk` per input with the vector plus document ID, filename, page number, and chunk ID metadata. Defaults are `nomic-embed-text` and a batch size of 8. Use `iter_embeddings()` to stream output batch by batch, or `embed_chunks()` when collecting all results in memory is appropriate.
-
-Set `OLLAMA_BASE_URL`, `OLLAMA_EMBEDDING_MODEL`, and optionally `OLLAMA_EMBEDDING_BATCH_SIZE` in `.env`. The service never downloads a model; if it is missing, the error shows the explicit `ollama pull` command. Timeout settings reuse `LLM_CONNECT_TIMEOUT_SECONDS` and `LLM_REQUEST_TIMEOUT_SECONDS`.
-
-Run real local embedding generation with sample chunks, or provide a PDF path to use the PDF ingestion pipeline:
+It validates the document ID against the configured ChromaDB, runs the workflow, and saves Markdown and PDF under `reports/generated/` by default. The configured Tavily provider is used only when available; otherwise the runner uses clearly labeled demo fixtures. For help with additional options:
 
 ```powershell
-python scripts/test_embeddings.py
-python scripts/test_embeddings.py --pdf .\path\to\document.pdf
+python scripts/test_end_to_end.py --help
 ```
 
-Run mocked HTTP unit tests (no Ollama connection):
+## Tests
 
-```powershell
-python -m unittest discover -s tests -p "test_embeddings.py" -v
-```
-
-## Persistent vector storage
-
-`ChromaVectorStore` in `agentx/storage/` writes existing PDF chunks and their existing `EmbeddedChunk` vectors into a persistent local ChromaDB collection. It does not call Ollama or generate embeddings. Chunk IDs are Chroma record IDs; original text and document/file/page/chunk metadata are stored alongside each vector. `upsert` makes re-ingesting the same stable chunk IDs idempotent. The default database directory is `./data/chroma` (ignored by Git); override it with `CHROMA_PERSIST_DIRECTORY` or the constructor's `persist_directory` argument. Use `add_chunks(chunks, embeddings)` with matching ordered inputs. It writes bounded batches and returns the number of records written. `get_by_document_id(document_id)` returns stored text, metadata, and vectors for that document.
-
-Install ChromaDB with `python -m pip install -r requirements.txt`. Test persistence in a temporary database and run the end-to-end local demo (which uses Ollama for embeddings):
-
-```powershell
-python -m unittest discover -s tests -p "test_vector_storage.py" -v
-python scripts/test_vector_storage.py
-python scripts/test_vector_storage.py --pdf .\path\to\document.pdf
-```
-
-## Semantic retrieval
-
-`SemanticRetriever` in `agentx/retrieval/` finds stored PDF chunks that are semantically similar to a natural-language question. It embeds the question once with the existing `OllamaEmbeddingService` using the configured `OLLAMA_EMBEDDING_MODEL` (default `nomic-embed-text`), then passes that vector to the existing persistent ChromaDB collection. ChromaDB compares the query vector with stored chunk vectors using the collection's cosine distance. Results include the original text, document ID, filename, page number, chunk ID, distance, and cosine similarity. The default top-k is 5; pass `top_k` to the retriever or `--top-k` to the demo to change it, and optionally filter by `document_id`. Retrieval returns source chunks only; answer generation is not part of this step.
-
-Run retrieval against the configured local database and Ollama service:
-
-```powershell
-python -m unittest discover -s tests -p "test_semantic_retrieval.py" -v
-python scripts/test_semantic_retrieval.py
-python scripts/test_semantic_retrieval.py --question "What are the main findings?" --top-k 3
-python scripts/test_semantic_retrieval.py --question "Summarize the methods" --document-id YOUR_DOCUMENT_ID
-```
-
-The demo uses only records already stored in `CHROMA_PERSIST_DIRECTORY` (default `./data/chroma`). If the collection does not exist or has no matching chunks, it prints an ingestion hint; it does not create fixtures or insert sample results.
-
-## PDF RAG answer generation
-
-`RAGAgent` in `agentx/agents/rag_agent.py` combines the existing `SemanticRetriever` with the provider-neutral LLM Gateway. It embeds and retrieves the question, then gives the model only the retrieved passages with their real filename, page, document ID, chunk ID, and similarity score. The prompt instructs the model to use only this evidence, cite passages as `[1]`, `[2]`, and return `INSUFFICIENT_EVIDENCE:` when the passages do not support an answer. Unknown citation numbers are removed from the returned answer. The structured `RAGAnswer` includes the question, answer, status (`success`, `insufficient_evidence`, or `error`), and source metadata.
-
-The default is 5 retrieved chunks. Configure the local chat and embedding models through `OLLAMA_MODEL` (default `llama3.2:1b`), `OLLAMA_EMBEDDING_MODEL` (default `nomic-embed-text`), and `OLLAMA_BASE_URL`; all existing timeout settings are reused. No additional RAG-specific dependency or API key is required in local Ollama mode. If retrieval returns no passages, the LLM is not called. This step returns answers and citations but does not independently verify each claim or guarantee model correctness; citations identify retrieved passages and should be checked against the source document for high-stakes use.
-
-Run the local RAG demo against chunks already stored in ChromaDB:
-
-```powershell
-python -m unittest discover -s tests -p "test_rag_agent.py" -v
-python scripts/test_rag_agent.py
-python scripts/test_rag_agent.py --question "How does the CNN-LSTM architecture work?" --top-k 5 --document-id YOUR_DOCUMENT_ID
-```
-
-The demo accepts `--question`, `--top-k`, `--document-id`, and `--persist-directory`. It does not insert example documents or generate placeholder citations. Ingest a PDF and store its chunks before querying an empty database.
-## Research agent and web search
-
-`ResearchAgent` in `agentx/agents/` retrieves normalized sources, asks the existing LLM Gateway to synthesize only the supplied source snippets, and returns a structured answer with findings and numbered citations. Source metadata includes title, URL, snippet, and publication date when provided by the search backend. Snippets are bounded before prompt assembly to keep local model context use modest.
-
-`WEB_SEARCH_PROVIDER=demo` is the default and uses clearly labeled example.com fixtures; it does not perform live web research. Configure Tavily for live search by setting `WEB_SEARCH_PROVIDER=tavily` and `TAVILY_API_KEY` in `.env`. The Tavily adapter uses the Search API endpoint and bearer-token authentication. Live search has not been tested unless a real Tavily key is configured and a real search request is run.
-
-Run the demonstration workflow (demo sources with the configured LLM, normally local Ollama):
-
-```powershell
-python scripts/test_research_agent.py
-```
-
-For real web results, first configure Tavily as above, then run the same command. A custom question can be passed as a quoted positional argument:
-
-```powershell
-python scripts/test_research_agent.py "What are recent advances in small language models?"
-```
-## Tests and verification
-
-The tests use mocked provider constructors and the Python standard library. They do not make network calls, invoke paid APIs, or download models.
+Run the full suite from the repository root:
 
 ```powershell
 python -m unittest discover -s tests -v
-python -c "from agentx.core.settings import Settings; from agentx.llm import create_chat_model; print(Settings.from_env().llm_provider)"
+python -m compileall -q agentx app.py scripts tests
 ```
+
+**Latest verified test result for this repository state: 146 tests passed.** Tests mock provider calls and avoid requiring a paid API. ChromaDB storage tests use isolated temporary databases. Running the unit suite does not prove live Tavily or full Ollama inference works on another machine.
+
+## Known limitations
+
+- Web search uses demo fixtures unless Tavily is configured; live web research is not enabled by default.
+- Verification is deterministic lexical matching with sentence alignment and a small wording alias map. It is not guaranteed semantic verification, entailment checking, source-quality assessment, or factual validation. Ambiguous evidence should be treated as inconclusive.
+- Local document indexing and retrieval require Ollama and a persistent ChromaDB directory. The configured Ollama models must already be installed.
+- PDF extraction reads embedded text; OCR for scanned-image PDFs is not implemented.
+- CSV analysis is not connected to the current workflow. `agentx/analysis/` is only a package scaffold.
+- `agentx/api/` is only a package scaffold; the current user interface calls the existing backend directly through Streamlit.
+- Markdown report assembly is deterministic and does not use an LLM to improve prose.
+
+## Future improvements
+
+- Add optional, well-calibrated semantic claim/evidence comparison with transparent uncertainty reporting.
+- Add OCR as an opt-in PDF ingestion path for scanned documents.
+- Implement CSV ingestion and analysis as a routed workflow capability.
+- Add broader live-provider integration checks that can be enabled explicitly by developers.
+- Improve report customization and export accessibility while preserving source provenance.
+- Add an API layer if a separate client or deployment architecture becomes necessary.
+
+## License
+
+No license file is currently included. Add a license before distributing or reusing the project outside its intended context.
