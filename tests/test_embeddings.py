@@ -85,7 +85,20 @@ class EmbeddingServiceTests(unittest.TestCase):
     def test_default_model_and_batch_settings(self) -> None:
         settings = Settings.from_env({})
         self.assertEqual(settings.ollama_embedding_model, "nomic-embed-text")
+        self.assertEqual(settings.embedding_provider, "ollama")
+        self.assertEqual(settings.openai_embedding_model, "text-embedding-3-small")
         self.assertGreaterEqual(settings.embedding_batch_size, 1)
+
+    def test_provider_configuration_is_validated_without_exposing_credentials(self):
+        with self.assertRaisesRegex(ConfigurationError, "OPENAI_API_KEY"):
+            Settings.from_env({"EMBEDDING_PROVIDER": "openai"})
+        configured = Settings.from_env({
+            "EMBEDDING_PROVIDER": "openai",
+            "OPENAI_API_KEY": "test-only-secret",
+            "OPENAI_EMBEDDING_MODEL": "text-embedding-test",
+        })
+        self.assertEqual(configured.embedding_provider, "openai")
+        self.assertEqual(configured.openai_embedding_model, "text-embedding-test")
 
     def test_batches_inputs_and_preserves_chunk_metadata(self) -> None:
         settings = Settings(embedding_batch_size=2)

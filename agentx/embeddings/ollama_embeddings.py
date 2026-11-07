@@ -12,7 +12,7 @@ from agentx.ingestion import PDFChunk
 
 
 class EmbeddingError(RuntimeError):
-    """Base error for local embedding generation."""
+    """Base error for embedding generation across configured providers."""
 
 
 class EmbeddingConfigurationError(EmbeddingError):
@@ -39,6 +39,14 @@ class EmbeddingAPIError(EmbeddingError):
     """Raised when Ollama rejects an embedding request."""
 
 
+class EmbeddingProviderError(EmbeddingError):
+    """Raised when a hosted embedding provider rejects a request."""
+
+
+class EmbeddingAuthenticationError(EmbeddingProviderError):
+    """Raised when a hosted embedding provider rejects credentials."""
+
+
 class MalformedEmbeddingResponseError(EmbeddingError):
     """Raised when Ollama returns missing, invalid, or misaligned vectors."""
 
@@ -52,6 +60,8 @@ class EmbeddedChunk:
     page_number: int
     chunk_id: str
     embedding: tuple[float, ...]
+    provider: str = "ollama"
+    model: str = "nomic-embed-text"
 
     @property
     def metadata(self) -> dict[str, str | int]:
@@ -71,6 +81,8 @@ class OllamaEmbeddingService:
     or all output vectors unless the caller collects them.
     """
 
+    provider = "ollama"
+
     def __init__(
         self,
         *,
@@ -80,6 +92,10 @@ class OllamaEmbeddingService:
     ) -> None:
         self.settings = settings or Settings.from_env()
         self.settings.validate(provider="ollama")
+        if self.settings.embedding_provider != self.provider:
+            raise EmbeddingConfigurationError(
+                "OllamaEmbeddingService requires EMBEDDING_PROVIDER=ollama."
+            )
         selected_model = (
             self.settings.ollama_embedding_model
             if model_name is None
@@ -228,6 +244,8 @@ class OllamaEmbeddingService:
                     page_number=chunk.page_number,
                     chunk_id=chunk.chunk_id,
                     embedding=tuple(float(value) for value in vector),
+                    provider=self.provider,
+                    model=self.model_name,
                 )
             )
         return output

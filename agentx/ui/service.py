@@ -9,7 +9,7 @@ from pathlib import Path
 
 from agentx.core.end_to_end import local_runtime_settings
 from agentx.core.settings import Settings
-from agentx.embeddings import OllamaEmbeddingService
+from agentx.embeddings import create_embedding_service
 from agentx.ingestion import PDFChunk, PDFIngestor
 from agentx.storage import ChromaVectorStore
 
@@ -66,8 +66,12 @@ def ingest_uploaded_pdf(
 
     chunks: list[PDFChunk] = PDFIngestor().ingest(path, document_id=document_id)
     runtime = local_runtime_settings(settings)
-    embedding_service = OllamaEmbeddingService(settings=runtime)
-    store = ChromaVectorStore(persist_directory)
+    embedding_service = create_embedding_service(runtime)
+    store = ChromaVectorStore(
+        persist_directory,
+        embedding_provider=embedding_service.provider,
+        embedding_model=embedding_service.model_name,
+    )
     try:
         stored_count = store.add_chunks(chunks, embedding_service.iter_embeddings(chunks))
     finally:

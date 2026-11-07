@@ -10,7 +10,7 @@ from typing import Any, Callable
 from agentx.agents import RAGAgent, ResearchAgent, ReportGenerator
 from agentx.core.settings import ConfigurationError, Settings
 from agentx.core.workflow import build_workflow
-from agentx.embeddings import OllamaEmbeddingService
+from agentx.embeddings import create_embedding_service
 from agentx.retrieval import SemanticRetriever
 from agentx.reports import PDFReportExporter
 from agentx.storage import ChromaVectorStore, VectorStoreError
@@ -63,11 +63,22 @@ class _FallbackResearchAgent:
 
 
 def _runtime_settings(settings: Settings | None) -> tuple[Settings, list[str]]:
-    """Load configuration, selecting demo search if Tavily has no key.
+    """Load validated runtime settings, including the selected chat provider.
 
-    The local Ollama provider is selected for this smoke run regardless of the
-    project's cloud setting. Credential values are never returned or logged.
+    Tavily without a key falls back to labeled demo fixtures. Credential values
+    are never returned or logged.
     """
+    selected, notices = _load_runtime_configuration(settings)
+    if selected.llm_provider == "openai" and not selected.openai_api_key:
+        raise EndToEndError(
+            "LLM_PROVIDER is 'openai' but OPENAI_API_KEY is not configured. "
+            "Set the key or choose LLM_PROVIDER=ollama."
+        )
+    return selected, notices
+
+
+def _load_runtime_configuration(settings: Settings | None) -> tuple[Settings, list[str]]:
+    """Read base settings and preserve the safe demo-search fallback."""
     notices: list[str] = []
     if settings is None:
         try:
@@ -82,23 +93,31 @@ def _runtime_settings(settings: Settings | None) -> tuple[Settings, list[str]]:
         if requested_search == "tavily" and not has_tavily_key:
             environment["WEB_SEARCH_PROVIDER"] = "demo"
             notices.append("TAVILY_API_KEY is not configured; using labeled demo search data.")
-        settings = Settings.from_env(environment)
+        try:
+            settings = Settings.from_env(environment)
+        except ConfigurationError as exc:
+            raise EndToEndError(f"AgentX configuration is invalid: {exc}") from exc
 
     selected = settings
     if selected.web_search_provider == "tavily" and not selected.tavily_api_key:
         selected = replace(selected, web_search_provider="demo")
         notices.append("TAVILY_API_KEY is not configured; using labeled demo search data.")
-    selected = replace(selected, llm_provider="ollama")
     try:
-        selected.validate(provider="ollama")
+        selected.validate(provider=selected.llm_provider)
     except ConfigurationError as exc:
-        raise EndToEndError(f"Local Ollama configuration is invalid: {exc}") from exc
+        raise EndToEndError(f"AgentX configuration is invalid: {exc}") from exc
     return selected, notices
 
 
 def local_runtime_settings(settings: Settings | None = None) -> Settings:
-    """Return validated local Ollama settings for document indexing or QA."""
-    return _runtime_settings(settings)[0]
+    """Return local Ollama settings for the embedding-only upload pipeline."""
+    configured, _notices = _load_runtime_configuration(settings)
+    local_settings = replace(configured, llm_provider="ollama")
+    try:
+        local_settings.validate(provider="ollama")
+    except ConfigurationError as exc:
+        raise EndToEndError(f"Local Ollama configuration is invalid: {exc}") from exc
+    return local_settings
 
 
 def run_end_to_end(
@@ -112,7 +131,7 @@ def run_end_to_end(
     settings: Settings | None = None,
     progress: Callable[[str], None] | None = print,
 ) -> EndToEndResult:
-    """Run the graph with local Ollama, optional document retrieval, and PDF export.
+    """Run the graph with the configured chat provider and PDF retrieval/export.
 
     This function uses existing AgentX agent interfaces. Tests can inject
     ``settings`` and replace module constructors with mocks; no external calls
@@ -130,11 +149,19 @@ def run_end_to_end(
         raise ValueError("workflow_mode requires a validated document_id.")
 
     notify = progress or (lambda _message: None)
-    notify("[1/5] Loading local Ollama and search configuration...")
+    notify("[1/5] Loading model provider and search configuration...")
     configured, notices = _runtime_settings(settings)
 
     notify("[2/5] Opening the configured local ChromaDB...")
-    store = ChromaVectorStore(persist_directory)
+    try:
+        embedding_service = create_embedding_service(configured)
+    except Exception as exc:
+        raise EndToEndError(f"Embedding provider configuration failed: {exc}") from exc
+    store = ChromaVectorStore(
+        persist_directory,
+        embedding_provider=embedding_service.provider,
+        embedding_model=embedding_service.model_name,
+    )
     selected_document_id = document_id.strip() if document_id else None
     try:
         if selected_document_id:
@@ -168,7 +195,6 @@ def run_end_to_end(
                 settings=configured, search_provider=search_provider
             )
 
-        embedding_service = OllamaEmbeddingService(settings=configured)
         retriever = SemanticRetriever(
             embedding_service=embedding_service,
             vector_store=store,

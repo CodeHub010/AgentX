@@ -20,6 +20,8 @@ class Settings:
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2:1b"
     ollama_embedding_model: str = "nomic-embed-text"
+    embedding_provider: str = "ollama"
+    openai_embedding_model: str = "text-embedding-3-small"
     embedding_batch_size: int = 8
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
@@ -46,6 +48,10 @@ class Settings:
         embedding_model = environ.get(
             "OLLAMA_EMBEDDING_MODEL", "nomic-embed-text"
         ).strip()
+        embedding_provider = environ.get("EMBEDDING_PROVIDER", "ollama").strip().lower()
+        openai_embedding_model = environ.get(
+            "OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"
+        ).strip()
         try:
             embedding_batch_size = int(environ.get("OLLAMA_EMBEDDING_BATCH_SIZE", "8"))
         except ValueError as exc:
@@ -65,6 +71,8 @@ class Settings:
             ollama_base_url=ollama_url,
             ollama_model=ollama_model,
             ollama_embedding_model=embedding_model,
+            embedding_provider=embedding_provider,
+            openai_embedding_model=openai_embedding_model,
             embedding_batch_size=embedding_batch_size,
             openai_api_key=openai_key,
             openai_model=openai_model,
@@ -107,8 +115,27 @@ class Settings:
                 raise ConfigurationError("OLLAMA_MODEL must not be empty.")
         elif not self.openai_model:
             raise ConfigurationError("OPENAI_MODEL must not be empty.")
-        if not self.ollama_embedding_model:
-            raise ConfigurationError("OLLAMA_EMBEDDING_MODEL must not be empty.")
+        if self.embedding_provider not in {"ollama", "openai"}:
+            raise ConfigurationError(
+                f"Unsupported EMBEDDING_PROVIDER {self.embedding_provider!r}; "
+                "choose 'ollama' or 'openai'."
+            )
+        selected_embedding_model = (
+            self.ollama_embedding_model
+            if self.embedding_provider == "ollama"
+            else self.openai_embedding_model
+        )
+        selected_embedding_setting = (
+            "OLLAMA_EMBEDDING_MODEL"
+            if self.embedding_provider == "ollama"
+            else "OPENAI_EMBEDDING_MODEL"
+        )
+        if not selected_embedding_model:
+            raise ConfigurationError(f"{selected_embedding_setting} must not be empty.")
+        if self.embedding_provider == "openai" and not self.openai_api_key:
+            raise ConfigurationError(
+                "OPENAI_API_KEY is required when EMBEDDING_PROVIDER is 'openai'."
+            )
         if self.embedding_batch_size < 1:
             raise ConfigurationError("OLLAMA_EMBEDDING_BATCH_SIZE must be at least 1.")
         if self.web_search_provider not in {"demo", "tavily"}:

@@ -24,12 +24,12 @@ AgentX brings those steps into a single workflow. It keeps retrieved web snippet
 - **Multi-agent workflow:** focused Supervisor, Research, Knowledge/RAG, Verification, and Report Generator roles.
 - **Supervisor and task routing:** deterministic query classification with conditional LangGraph routes.
 - **Web research:** configurable demo fixtures by default, with an optional Tavily provider.
-- **PDF knowledge retrieval:** page-aware extraction, chunking, local embeddings, persistent ChromaDB storage, and semantic retrieval.
+- **PDF knowledge retrieval:** page-aware extraction, chunking, provider-configurable embeddings, persistent ChromaDB storage, and semantic retrieval.
 - **Evidence verification:** checks source references and compares claims with preserved source text; highlights unsupported, conflicting, and insufficient evidence.
 - **Automated report generation:** deterministic Markdown assembly using findings and original source metadata.
 - **PDF export:** renders the generated Markdown report through ReportLab.
 - **Streamlit dashboard:** upload documents, select a research mode, inspect results, and download the report.
-- **Local-first model use:** Ollama chat and embeddings work without a cloud API key. Models are never downloaded automatically by AgentX.
+- **Local-first model use:** Ollama chat and embeddings are the defaults and work without a cloud API key. OpenAI embeddings are optional. Models are never downloaded automatically by AgentX.
 
 ## Architecture
 
@@ -37,7 +37,7 @@ AgentX brings those steps into a single workflow. It keeps retrieved web snippet
 flowchart TD
     U[User question and optional PDF] --> UI[Streamlit dashboard]
     UI --> RUN[End-to-end runner]
-    PDF[PDFIngestor] --> EMB[Ollama embedding service]
+    PDF[PDFIngestor] --> EMB[Configured embedding service]
     EMB --> DB[(Persistent ChromaDB)]
     UI --> PDF
     RUN --> SUP[Supervisor]
@@ -79,7 +79,7 @@ The Combined workflow invokes the Research and Knowledge agents with the same qu
 - Python 3.11 or 3.12
 - LangChain and LangGraph
 - Ollama with `llama3.2:1b` for chat and `nomic-embed-text` for embeddings by default
-- Optional OpenAI provider in the shared LLM Gateway
+- Optional OpenAI provider in the shared LLM Gateway and embedding service
 - ChromaDB for persistent local document vectors
 - PyMuPDF for PDF text extraction
 - ReportLab for PDF report export
@@ -87,7 +87,7 @@ The Combined workflow invokes the Research and Knowledge agents with the same qu
 - `httpx` for local embedding and Tavily HTTP calls
 - Standard-library `unittest` for automated tests
 
-The end-to-end runner explicitly selects local Ollama for its workflow. The cloud gateway is an optional backend capability; the dashboard's end-to-end flow does not automatically switch to a cloud model.
+The end-to-end runner uses `LLM_PROVIDER` for chat selection and `EMBEDDING_PROVIDER` for document and query embeddings. Both default to `ollama`; `openai` requires `OPENAI_API_KEY`. `OLLAMA_EMBEDDING_MODEL` and `OPENAI_EMBEDDING_MODEL` select each provider's embedding model. Ingestion and retrieval use the same configured service and model identity. ChromaDB stores provider/model metadata and isolates non-default provider/model pairs into separate collections, so Ollama vectors are never silently reused as OpenAI vectors. Existing data in the default `agentx_pdf_chunks` collection remains available for `ollama` with `nomic-embed-text`.
 
 ## Repository structure
 
@@ -99,7 +99,7 @@ AgentX/
 ├── agentx/
 │   ├── agents/                    # Research, RAG, verification, report agents
 │   ├── core/                      # Settings, shared state, routing, workflow, runner
-│   ├── embeddings/                # Ollama embedding service
+│   ├── embeddings/                # Ollama and OpenAI embedding providers
 │   ├── ingestion/                 # PDF extraction and chunking
 │   ├── llm/                       # Provider-neutral local/cloud chat gateway
 │   ├── reports/                   # Markdown-to-PDF export
@@ -137,7 +137,7 @@ Keep `.env` private. It is ignored by Git. Leave optional provider credentials b
 
 ## Ollama installation and models
 
-Install Ollama for Windows from [ollama.com/download](https://ollama.com/download), then open the Ollama application or start its service. Pull the two models used by default:
+Install Ollama for Windows from [ollama.com/download](https://ollama.com/download), then open the Ollama application or start its service. Pull the two default local models:
 
 ```powershell
 ollama pull llama3.2:1b
@@ -145,7 +145,7 @@ ollama pull nomic-embed-text
 ollama list
 ```
 
-AgentX uses the chat model for synthesis and the embedding model for indexing and retrieval. It does not download either model automatically. On an 8 GB computer, keep the small chat model and embedding model configuration and avoid loading multiple large chat models at once.
+AgentX uses the chat model for synthesis and the configured embedding model for indexing and retrieval. With the default Ollama configuration, pull the local models explicitly; AgentX does not download models. If `EMBEDDING_PROVIDER=openai`, Ollama is not required for embeddings, but `OPENAI_API_KEY` must be set. On an 8 GB computer, the Ollama default keeps local model use small and avoids loading multiple large chat models at once.
 
 ## Environment configuration
 
@@ -156,13 +156,15 @@ AgentX uses the chat model for synthesis and the embedding model for indexing an
 | `LLM_PROVIDER` | Shared gateway default: `ollama` or `openai` | `ollama` |
 | `OLLAMA_BASE_URL` | Local Ollama endpoint | `http://localhost:11434` |
 | `OLLAMA_MODEL` | Chat model | `llama3.2:1b` |
-| `OLLAMA_EMBEDDING_MODEL` | PDF/query embedding model | `nomic-embed-text` |
+| `OLLAMA_EMBEDDING_MODEL` | Local Ollama PDF/query embedding model | `nomic-embed-text` |
 | `OLLAMA_EMBEDDING_BATCH_SIZE` | Embedding batch size | `8` |
+| `EMBEDDING_PROVIDER` | Embedding provider: `ollama` or `openai` | `ollama` |
+| `OPENAI_EMBEDDING_MODEL` | Hosted OpenAI PDF/query embedding model | `text-embedding-3-small` |
 | `LLM_CONNECT_TIMEOUT_SECONDS` | Connection timeout | `10` |
 | `LLM_REQUEST_TIMEOUT_SECONDS` | Request timeout | `120` |
 | `WEB_SEARCH_PROVIDER` | `demo` or `tavily` | `demo` |
 | `TAVILY_API_KEY` | Required only for configured Tavily live search | blank |
-| `OPENAI_API_KEY` | Required only when selecting OpenAI in the gateway | blank |
+| `OPENAI_API_KEY` | Required when chat or embeddings select OpenAI | blank |
 | `CHROMA_PERSIST_DIRECTORY` | Persistent document vector database | `./data/chroma` |
 | `SQLITE_PATH` | Reserved application setting | `./data/agentx.sqlite3` |
 
@@ -176,7 +178,7 @@ From the repository root, with the virtual environment active and Ollama running
 python -m streamlit run app.py
 ```
 
-The dashboard opens in a browser. It offers **Web research**, **Document only**, and **Combined research** modes. Document modes accept a PDF upload or a document already indexed during the current browser session. Uploading extracts and chunks text, generates local embeddings, and stores the chunks in persistent ChromaDB. The same PDF content hash reuses its document ID on re-upload.
+The dashboard opens in a browser. It offers **Web research**, **Document only**, and **Combined research** modes. Document modes accept a PDF upload or a document already indexed during the current browser session. Uploading extracts and chunks text, generates vectors with `EMBEDDING_PROVIDER`, and stores the chunks in persistent ChromaDB. The same PDF content hash reuses its document ID on re-upload.
 
 ### Example questions
 
@@ -186,7 +188,7 @@ The dashboard opens in a browser. It offers **Web research**, **Document only**,
 
 ### Typical workflow
 
-1. Start Ollama and confirm both configured models are available with `ollama list`.
+1. For the default local setup, start Ollama and confirm the configured local models are available with `ollama list`. OpenAI chat or embedding calls require a configured key and network access.
 2. Launch the Streamlit app.
 3. Enter a focused question and choose a mode.
 4. For Document or Combined mode, upload a text-based PDF or select a document indexed in the current session.
@@ -218,13 +220,13 @@ python -m unittest discover -s tests -v
 python -m compileall -q agentx app.py scripts tests
 ```
 
-**Latest verified test result for this repository state: 146 tests passed.** Tests mock provider calls and avoid requiring a paid API. ChromaDB storage tests use isolated temporary databases. Running the unit suite does not prove live Tavily or full Ollama inference works on another machine.
+**Latest verified test result for this repository state: 161 tests passed.** Provider tests mock OpenAI/Ollama calls and do not require a paid API. ChromaDB storage tests use isolated temporary databases. Running the unit suite does not prove live Tavily, OpenAI embeddings, or full Ollama inference works on another machine.
 
 ## Known limitations
 
 - Web search uses demo fixtures unless Tavily is configured; live web research is not enabled by default.
 - Verification is deterministic lexical matching with sentence alignment and a small wording alias map. It is not guaranteed semantic verification, entailment checking, source-quality assessment, or factual validation. Ambiguous evidence should be treated as inconclusive.
-- Local document indexing and retrieval require Ollama and a persistent ChromaDB directory. The configured Ollama models must already be installed.
+- Document indexing and retrieval require a persistent ChromaDB directory and the selected embedding provider. The default Ollama models must already be installed; OpenAI embeddings require `OPENAI_API_KEY` and network access.
 - PDF extraction reads embedded text; OCR for scanned-image PDFs is not implemented.
 - CSV analysis is not connected to the current workflow. `agentx/analysis/` is only a package scaffold.
 - `agentx/api/` is only a package scaffold; the current user interface calls the existing backend directly through Streamlit.

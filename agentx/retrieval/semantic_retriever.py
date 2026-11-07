@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from agentx.core.settings import Settings
-from agentx.embeddings import EmbeddingError, OllamaEmbeddingService
+from agentx.embeddings import EmbeddingError, EmbeddingService, create_embedding_service
 from agentx.ingestion import PDFChunk
 from agentx.storage import (
     ChromaVectorStore,
@@ -65,7 +65,7 @@ class SemanticRetriever:
     def __init__(
         self,
         *,
-        embedding_service: OllamaEmbeddingService | None = None,
+        embedding_service: EmbeddingService | None = None,
         vector_store: ChromaVectorStore | None = None,
         settings: Settings | None = None,
         persist_directory: str | None = None,
@@ -73,10 +73,24 @@ class SemanticRetriever:
     ) -> None:
         self._validate_top_k(top_k)
         self.top_k = top_k
-        self.embedding_service = embedding_service or OllamaEmbeddingService(
-            settings=settings
-        )
-        self.vector_store = vector_store or ChromaVectorStore(persist_directory)
+        self.embedding_service = embedding_service or create_embedding_service(settings)
+        if vector_store is None:
+            self.vector_store = ChromaVectorStore(
+                persist_directory,
+                embedding_provider=self.embedding_service.provider,
+                embedding_model=self.embedding_service.model_name,
+            )
+        else:
+            self.vector_store = vector_store
+            store_provider = getattr(vector_store, "embedding_provider", None)
+            store_model = getattr(vector_store, "embedding_model", None)
+            if isinstance(store_provider, str) and isinstance(store_model, str) and (
+                store_provider,
+                store_model,
+            ) != (self.embedding_service.provider, self.embedding_service.model_name):
+                raise RetrievalConfigurationError(
+                    "Embedding service and vector store configurations do not match."
+                )
 
     def retrieve(
         self,

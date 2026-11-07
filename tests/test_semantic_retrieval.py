@@ -99,6 +99,17 @@ class SemanticRetrieverTests(unittest.TestCase):
             self.query_vector, top_k=5, document_id=None
         )
 
+    def test_injected_store_must_match_explicit_embedding_identity(self):
+        self.embedding_service.provider = "openai"
+        self.embedding_service.model_name = "text-embedding-3-small"
+        self.vector_store.embedding_provider = "ollama"
+        self.vector_store.embedding_model = "nomic-embed-text"
+        with self.assertRaisesRegex(RetrievalConfigurationError, "do not match"):
+            SemanticRetriever(
+                embedding_service=self.embedding_service,
+                vector_store=self.vector_store,
+            )
+
     def test_document_id_filter_is_forwarded(self):
         self.vector_store.query_by_embedding.return_value = []
         self.retriever.retrieve("question", document_id="doc-42")

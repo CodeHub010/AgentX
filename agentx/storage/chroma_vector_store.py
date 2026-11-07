@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import hashlib
+import math
 from dataclasses import dataclass
 from itertools import zip_longest
 from pathlib import Path
@@ -43,6 +45,8 @@ class StoredChunk:
     text: str
     embedding: tuple[float, ...]
     distance: float | None = None
+    embedding_provider: str = "ollama"
+    embedding_model: str = "nomic-embed-text"
 
     @property
     def similarity(self) -> float | None:
@@ -66,16 +70,32 @@ class ChromaVectorStore:
         *,
         collection_name: str = "agentx_pdf_chunks",
         batch_size: int = 64,
+        embedding_provider: str = "ollama",
+        embedding_model: str = "nomic-embed-text",
     ) -> None:
         if not collection_name.strip():
             raise VectorStoreConfigurationError("collection_name must not be empty.")
         if batch_size < 1:
             raise VectorStoreConfigurationError("batch_size must be at least 1.")
+        if embedding_provider not in {"ollama", "openai"}:
+            raise VectorStoreConfigurationError("Unsupported embedding provider.")
+        if not embedding_model or not embedding_model.strip():
+            raise VectorStoreConfigurationError("embedding_model must not be empty.")
         configured_path = persist_directory or os.getenv(
             "CHROMA_PERSIST_DIRECTORY", "./data/chroma"
         )
         self.persist_directory = Path(configured_path).expanduser()
-        self.collection_name = collection_name.strip()
+        self.base_collection_name = collection_name.strip()
+        self.embedding_provider = embedding_provider
+        self.embedding_model = embedding_model.strip()
+        # Keep the historic default collection (and its local Ollama vectors)
+        # intact. Other provider/model pairs get isolated collections.
+        if (embedding_provider, self.embedding_model) == ("ollama", "nomic-embed-text"):
+            self.collection_name = self.base_collection_name
+        else:
+            identity = f"{embedding_provider}:{self.embedding_model}"
+            suffix = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
+            self.collection_name = f"{self.base_collection_name[:48]}_{suffix}"
         self.batch_size = batch_size
         self._client = None
         self._collection = None
@@ -161,6 +181,7 @@ class ChromaVectorStore:
         batch_chunks: list[PDFChunk] = []
         batch_embeddings: list[EmbeddedChunk] = []
         written = 0
+        expected_dimension: int | None = None
 
         def flush() -> int:
             if not batch_chunks:
@@ -170,7 +191,14 @@ class ChromaVectorStore:
                     ids=[chunk.chunk_id for chunk in batch_chunks],
                     documents=[chunk.text for chunk in batch_chunks],
                     embeddings=[list(item.embedding) for item in batch_embeddings],
-                    metadatas=[chunk.metadata for chunk in batch_chunks],
+                    metadatas=[
+                        {
+                            **chunk.metadata,
+                            "embedding_provider": self.embedding_provider,
+                            "embedding_model": self.embedding_model,
+                        }
+                        for chunk in batch_chunks
+                    ],
                 )
             except VectorStoreError:
                 raise
@@ -191,6 +219,22 @@ class ChromaVectorStore:
                     "Chunk and embedding inputs must contain the same number of records."
                 )
             self._validate_pair(chunk, embedded)
+            dimension = len(embedded.embedding)
+            if expected_dimension is None:
+                expected_dimension = dimension
+            elif dimension != expected_dimension:
+                raise VectorStoreConfigurationError(
+                    "Embedding vectors in one ingestion must have consistent dimensions."
+                )
+            if (embedded.provider, embedded.model) != (
+                self.embedding_provider,
+                self.embedding_model,
+            ):
+                raise VectorStoreConfigurationError(
+                    f"Embedding identity mismatch for {chunk.chunk_id!r}: "
+                    f"received {embedded.provider}/{embedded.model}, expected "
+                    f"{self.embedding_provider}/{self.embedding_model}."
+                )
             if chunk.chunk_id in seen_ids:
                 raise DuplicateChunkIDError(
                     f"Duplicate chunk ID in input: {chunk.chunk_id!r}."
@@ -226,6 +270,8 @@ class ChromaVectorStore:
                     chunk_id=metadata.get("chunk_id", chunk_id),
                     text=document,
                     embedding=tuple(float(value) for value in vector),
+                    embedding_provider=metadata.get("embedding_provider", self.embedding_provider),
+                    embedding_model=metadata.get("embedding_model", self.embedding_model),
                 )
                 for chunk_id, document, metadata, vector in zip(
                     ids, documents, metadatas, vectors
@@ -285,6 +331,8 @@ class ChromaVectorStore:
                     text=document,
                     embedding=(),
                     distance=float(distance),
+                    embedding_provider=metadata.get("embedding_provider", self.embedding_provider),
+                    embedding_model=metadata.get("embedding_model", self.embedding_model),
                 )
                 for chunk_id, document, metadata, distance in zip(
                     ids, documents, metadatas, distances
@@ -316,5 +364,14 @@ class ChromaVectorStore:
         if not embedded.embedding:
             raise VectorStoreConfigurationError(
                 f"Chunk {chunk.chunk_id!r} has an empty embedding vector."
+            )
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            for value in embedded.embedding
+        ):
+            raise VectorStoreConfigurationError(
+                f"Chunk {chunk.chunk_id!r} has invalid embedding values."
             )
 

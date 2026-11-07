@@ -17,11 +17,13 @@ class UploadServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with (
             patch("agentx.ui.service.PDFIngestor") as ingestor_factory,
-            patch("agentx.ui.service.OllamaEmbeddingService") as embedding_factory,
-            patch("agentx.ui.service.ChromaVectorStore", return_value=store),
+            patch("agentx.ui.service.create_embedding_service") as embedding_factory,
+            patch("agentx.ui.service.ChromaVectorStore", return_value=store) as store_factory,
             patch("agentx.ui.service.local_runtime_settings", return_value=object()),
             ):
                 ingestor_factory.return_value.ingest.return_value = [chunk]
+                embedding_factory.return_value.provider = "ollama"
+                embedding_factory.return_value.model_name = "nomic-embed-text"
                 embedding_factory.return_value.iter_embeddings.return_value = iter([object()])
                 result = ingest_uploaded_pdf(
                     b"pdf bytes", "My Report.pdf", upload_directory=Path(directory) / "uploads"
@@ -30,6 +32,13 @@ class UploadServiceTests(unittest.TestCase):
                 self.assertEqual(result.chunk_count, 1)
                 self.assertTrue(result.path.is_file())
                 self.assertEqual(ingestor_factory.return_value.ingest.call_args.kwargs["document_id"], result.document_id)
+                embedding_factory.assert_called_once_with(unittest.mock.ANY)
+                self.assertEqual(
+                    store_factory.call_args.kwargs["embedding_provider"], "ollama"
+                )
+                self.assertEqual(
+                    store_factory.call_args.kwargs["embedding_model"], "nomic-embed-text"
+                )
                 store.add_chunks.assert_called_once_with([chunk], embedding_factory.return_value.iter_embeddings.return_value)
                 store.close.assert_called_once()
 

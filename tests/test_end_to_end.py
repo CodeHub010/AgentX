@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 
 from agentx.agents.rag_agent import RAGAnswer, RAGSource
 from agentx.agents.research_agent import ResearchAnswer, ResearchCitation, ResearchFinding
-from agentx.core.end_to_end import DocumentUnavailableError, run_end_to_end
+from agentx.core.end_to_end import DocumentUnavailableError, EndToEndError, run_end_to_end
 from agentx.core.settings import Settings
 from agentx.storage import StoredChunk
 from agentx.tools.web_search import SearchProviderError
@@ -51,7 +51,7 @@ class EndToEndRunnerTests(unittest.TestCase):
             patch("agentx.core.end_to_end.ChromaVectorStore", return_value=self.store),
             patch("agentx.core.end_to_end.ResearchAgent", return_value=research),
             patch("agentx.core.end_to_end.RAGAgent", return_value=rag),
-            patch("agentx.core.end_to_end.OllamaEmbeddingService"),
+            patch("agentx.core.end_to_end.create_embedding_service"),
             patch("agentx.core.end_to_end.create_web_search_provider"),
         )
 
@@ -135,7 +135,7 @@ class EndToEndRunnerTests(unittest.TestCase):
                 patch("agentx.core.end_to_end.ChromaVectorStore", return_value=self.store),
                 patch("agentx.core.end_to_end.ResearchAgent", side_effect=[live_research, demo_research]) as agent_factory,
                 patch("agentx.core.end_to_end.RAGAgent", return_value=rag),
-                patch("agentx.core.end_to_end.OllamaEmbeddingService"),
+                patch("agentx.core.end_to_end.create_embedding_service"),
                 patch("agentx.core.end_to_end.create_web_search_provider"),
             ):
                 messages = []
@@ -150,23 +150,67 @@ class EndToEndRunnerTests(unittest.TestCase):
             self.assertNotIn("secret-token", "\n".join(messages))
             self.assertTrue(any("labeled demo" in notice for notice in result.notices))
 
-    def test_cloud_setting_is_overridden_for_local_ollama_smoke_run(self):
+    def test_default_runner_provider_remains_ollama(self):
         research, rag = Mock(), Mock()
         research.research.return_value = _research_answer()
         with tempfile.TemporaryDirectory() as temp_dir:
             with (
                 patch("agentx.core.end_to_end.ChromaVectorStore", return_value=self.store),
                 patch("agentx.core.end_to_end.ResearchAgent", return_value=research) as research_factory,
-                patch("agentx.core.end_to_end.RAGAgent", return_value=rag),
-                patch("agentx.core.end_to_end.OllamaEmbeddingService"),
+                patch("agentx.core.end_to_end.RAGAgent", return_value=rag) as rag_factory,
+                patch("agentx.core.end_to_end.create_embedding_service"),
                 patch("agentx.core.end_to_end.create_web_search_provider"),
             ):
                 run_end_to_end(
                     "Research recent CNN-LSTM methods online.",
-                    settings=Settings(llm_provider="openai", openai_api_key="do-not-print"),
+                    settings=Settings(),
                     report_output_dir=temp_dir, progress=None,
                 )
             self.assertEqual(research_factory.call_args.kwargs["settings"].llm_provider, "ollama")
+            self.assertEqual(rag_factory.call_args.kwargs["settings"].llm_provider, "ollama")
+
+    def test_openai_provider_is_forwarded_to_both_chat_agents(self):
+        research, rag = Mock(), Mock()
+        research.research.return_value = _research_answer()
+        rag.answer.return_value = _rag_answer()
+        settings = Settings(llm_provider="openai", openai_api_key="mock-credential")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with (
+                patch("agentx.core.end_to_end.ChromaVectorStore", return_value=self.store),
+                patch("agentx.core.end_to_end.ResearchAgent", return_value=research) as research_factory,
+                patch("agentx.core.end_to_end.RAGAgent", return_value=rag) as rag_factory,
+                patch("agentx.core.end_to_end.create_embedding_service"),
+                patch("agentx.core.end_to_end.create_web_search_provider"),
+            ):
+                run_end_to_end(
+                    "Compare the uploaded report with web research.",
+                    document_id="doc-123",
+                    settings=settings,
+                    report_output_dir=temp_dir,
+                    progress=None,
+                )
+            self.assertEqual(research_factory.call_args.kwargs["settings"].llm_provider, "openai")
+            self.assertEqual(rag_factory.call_args.kwargs["settings"].llm_provider, "openai")
+
+    def test_openai_provider_without_api_key_fails_before_opening_storage(self):
+        with patch("agentx.core.end_to_end.ChromaVectorStore") as store_factory:
+            with self.assertRaisesRegex(EndToEndError, "OPENAI_API_KEY is not configured"):
+                run_end_to_end(
+                    "Research recent CNN-LSTM methods online.",
+                    settings=Settings(llm_provider="openai"),
+                    progress=None,
+                )
+        store_factory.assert_not_called()
+
+    def test_invalid_provider_fails_with_configuration_error(self):
+        with patch("agentx.core.end_to_end.ChromaVectorStore") as store_factory:
+            with self.assertRaisesRegex(EndToEndError, "configuration is invalid"):
+                run_end_to_end(
+                    "Research recent CNN-LSTM methods online.",
+                    settings=Settings(llm_provider="unsupported"),
+                    progress=None,
+                )
+        store_factory.assert_not_called()
 
     def test_empty_question_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "must not be empty"):
@@ -175,3 +219,4 @@ class EndToEndRunnerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -96,6 +96,44 @@ class ChromaVectorStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(VectorStoreConfigurationError, "metadata"):
             self.store.add_chunks([chunk], [other])
 
+    def test_provider_model_mismatch_is_rejected_before_database_write(self):
+        chunk = PDFChunk("doc-1", "example.pdf", 1, "doc-1:p1:c0001", "passage")
+        vector = EmbeddedChunk(
+            "doc-1", "example.pdf", 1, "doc-1:p1:c0001", (0.1, 0.2),
+            provider="openai", model="text-embedding-3-small",
+        )
+        with self.assertRaisesRegex(VectorStoreConfigurationError, "identity mismatch"):
+            self.store.add_chunks([chunk], [vector])
+        self.assertIsNone(self.store._client)
+
+    def test_inconsistent_or_nonfinite_embedding_dimensions_are_rejected(self):
+        first_chunk, first_vector = self.pair("chunk-1")
+        second_chunk, second_vector = self.pair("chunk-2")
+        second_vector = EmbeddedChunk(
+            "doc-1", "example.pdf", 1, "chunk-2", (0.1, 0.2)
+        )
+        with self.assertRaisesRegex(VectorStoreConfigurationError, "consistent dimensions"):
+            self.store.add_chunks(
+                [first_chunk, second_chunk], [first_vector, second_vector]
+            )
+        invalid_vector = EmbeddedChunk(
+            "doc-1", "example.pdf", 1, first_chunk.chunk_id, (float("nan"),)
+        )
+        with self.assertRaisesRegex(VectorStoreConfigurationError, "invalid embedding values"):
+            self.store.add_chunks([first_chunk], [invalid_vector])
+
+    def test_non_default_provider_model_gets_separate_collection(self):
+        openai_store = ChromaVectorStore(
+            Path(self.temp_dir.name) / "chroma",
+            embedding_provider="openai",
+            embedding_model="text-embedding-3-small",
+        )
+        try:
+            self.assertNotEqual(self.store.collection_name, openai_store.collection_name)
+            self.assertEqual(self.store.collection_name, "agentx_pdf_chunks")
+        finally:
+            openai_store.close()
+
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--run-scenario":
@@ -115,6 +153,8 @@ if __name__ == "__main__":
             assert record.text == first[0].text
             assert record.filename == "example.pdf"
             assert record.page_number == 1
+            assert record.embedding_provider == "ollama"
+            assert record.embedding_model == "nomic-embed-text"
             assert len(record.embedding) == len(first[1].embedding)
             assert all(
                 math.isclose(actual, expected, rel_tol=1e-5, abs_tol=1e-6)
@@ -126,6 +166,8 @@ if __name__ == "__main__":
             assert len(records) == 2
             record = next(item for item in records if item.chunk_id == first[0].chunk_id)
             assert record.text == first[0].text
+            assert record.embedding_provider == "ollama"
+            assert record.embedding_model == "nomic-embed-text"
             assert all(
                 math.isclose(actual, expected, rel_tol=1e-5, abs_tol=1e-6)
                 for actual, expected in zip(record.embedding, first[1].embedding)
