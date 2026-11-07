@@ -1,0 +1,21 @@
+﻿# Python 3.11 or 3.12
+# Core orchestration and model providers
+langchain
+langgraph
+langchain-ollama
+langchain-openai
+httpx>=0.27,<1
+
+# Retrieval and document/data processing
+chromadb>=0.5,<2
+pymupdf>=1.24,<2
+pandas
+reportlab>=4.2,<5
+
+# API and UI
+fastapi
+uvicorn
+streamlit
+
+# Configuration
+python-dotenv
