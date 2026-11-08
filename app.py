@@ -125,7 +125,7 @@ def _render_result(result) -> None:
             for error in errors:
                 text = str(error).casefold()
                 if any(token in text for token in ("ollama", "connection", "timeout", "model")):
-                    st.write("A local model step failed. Confirm Ollama is running and the configured chat and embedding models are installed.")
+                    st.write("A model provider step failed. Check the selected provider, credentials, quota, and model configuration.")
                 elif any(token in text for token in ("tavily", "search")):
                     st.write("A web search step failed. Demo fixtures may be used when live Tavily search is unavailable.")
                 elif any(token in text for token in ("vector", "retriev", "chroma", "document")):
@@ -172,8 +172,8 @@ if submitted:
         document_id = selected_doc
         try:
             if mode is not None and uploaded_pdf is not None:
-                with st.status("Preparing PDF for local search…", expanded=True) as status:
-                    status.write("Extracting pages, creating chunks, and indexing with local Ollama embeddings…")
+                with st.status("Preparing PDF for search…", expanded=True) as status:
+                    status.write("Extracting pages, creating chunks, and indexing with the configured embedding provider…")
                     indexed: IngestedDocument = ingest_uploaded_pdf(uploaded_pdf.getvalue(), uploaded_pdf.name)
                     st.session_state.agentx_documents[indexed.document_id] = indexed.filename
                     document_id = indexed.document_id
@@ -197,7 +197,7 @@ if submitted:
         except (PDFIngestionError, EmbeddingError, VectorStoreError, DocumentUnavailableError, EndToEndError, ValueError) as exc:
             message = str(exc)
             if isinstance(exc, EmbeddingError):
-                message = "Could not connect to the configured local Ollama embedding model. Check that Ollama is running and the embedding model is installed."
+                message = "The configured embedding provider could not create vectors. Check its credentials, model settings, quota, and connectivity."
             elif isinstance(exc, VectorStoreError):
                 message = "Could not read or update the local ChromaDB. Check its configured directory and available disk space."
             elif isinstance(exc, PDFIngestionError):
@@ -207,12 +207,12 @@ if submitted:
             st.error(message)
         except Exception as exc:
             # Provider exception text may contain request details; surface only the type.
-            st.error(f"AgentX encountered an unexpected {type(exc).__name__}. Check Ollama, ChromaDB, and provider configuration, then try again.")
+            st.error(f"AgentX encountered an unexpected {type(exc).__name__}. Check provider configuration and document storage, then try again.")
 
 if st.session_state.get("agentx_last_result") is not None:
     _render_result(st.session_state.agentx_last_result)
 
 with st.sidebar:
-    st.markdown("### Local setup")
-    st.write("AgentX uses your configured Ollama models and local ChromaDB. No model is downloaded automatically.")
+    st.markdown("### Model and storage setup")
+    st.write("AgentX uses the configured chat and embedding providers. Ollama models are not downloaded automatically.")
     st.write("Configure live web search with `WEB_SEARCH_PROVIDER=tavily` and `TAVILY_API_KEY`; without it, web results are labeled demo data.")

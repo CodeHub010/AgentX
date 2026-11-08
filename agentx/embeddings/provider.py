@@ -32,6 +32,10 @@ def create_embedding_service(settings: Settings | None = None) -> EmbeddingServi
         from agentx.embeddings.openai_embeddings import OpenAIEmbeddingService
 
         return OpenAIEmbeddingService(settings=configured)
+    if configured.embedding_provider == "gemini":
+        from agentx.embeddings.gemini_embeddings import GeminiEmbeddingService
+
+        return GeminiEmbeddingService(settings=configured)
     raise EmbeddingConfigurationError(
         f"Unsupported embedding provider {configured.embedding_provider!r}."
     )

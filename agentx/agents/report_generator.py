@@ -99,7 +99,8 @@ class ReportGenerator:
         answer = self._string(state.get("rag_answer"))
         lines = ["## Uploaded Document Findings"]
         if answer:
-            lines.append(f"Document QA response (verification status: {self._status_for(answer, verification)}): {answer}")
+            status = self._document_answer_status(answer, verification, state)
+            lines.append(f"Document QA response (verification status: {status}): {answer}")
         else:
             lines.append("No document question-answering result is available.")
         passages = [record for record in evidence if record.get("source_type") == "document"]
@@ -226,6 +227,28 @@ class ReportGenerator:
             if self._string(item.get("claim")) == claim:
                 return self._string(item.get("status")) or "verification unavailable"
         return "verification unavailable"
+
+    def _document_answer_status(
+        self,
+        answer: str,
+        verification: list[dict[str, object]],
+        state: Mapping[str, object],
+    ) -> str:
+        """Summarize claim-level checks for a multi-claim document answer."""
+        matched = [
+            self._string(item.get("status"))
+            for item in verification
+            if self._string(item.get("claim"))
+            and self._string(item.get("claim")) in answer
+        ]
+        priorities = ("conflicting", "unsupported", "insufficient_evidence", "supported")
+        for status in priorities:
+            if status in matched:
+                return status
+        overall = self._string(state.get("verification_status"))
+        if overall in priorities:
+            return overall
+        return self._status_for(answer, verification)
 
     def _verification_source_labels(self, sources: object) -> list[str]:
         if not isinstance(sources, (list, tuple)):

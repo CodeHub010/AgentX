@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Mapping
 
 
@@ -22,9 +22,12 @@ class Settings:
     ollama_embedding_model: str = "nomic-embed-text"
     embedding_provider: str = "ollama"
     openai_embedding_model: str = "text-embedding-3-small"
+    gemini_embedding_model: str = "gemini-embedding-001"
     embedding_batch_size: int = 8
-    openai_api_key: str | None = None
+    openai_api_key: str | None = field(default=None, repr=False)
     openai_model: str = "gpt-4o-mini"
+    gemini_api_key: str | None = field(default=None, repr=False)
+    gemini_model: str = "gemini-3.6-flash"
     web_search_provider: str = "demo"
     tavily_api_key: str | None = None
     connect_timeout_seconds: float = 10.0
@@ -52,6 +55,9 @@ class Settings:
         openai_embedding_model = environ.get(
             "OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"
         ).strip()
+        gemini_embedding_model = environ.get(
+            "GEMINI_EMBEDDING_MODEL", "gemini-embedding-001"
+        ).strip()
         try:
             embedding_batch_size = int(environ.get("OLLAMA_EMBEDDING_BATCH_SIZE", "8"))
         except ValueError as exc:
@@ -60,6 +66,8 @@ class Settings:
             ) from exc
         openai_key = environ.get("OPENAI_API_KEY", "").strip() or None
         openai_model = environ.get("OPENAI_MODEL", "gpt-4o-mini").strip()
+        gemini_key = environ.get("GEMINI_API_KEY", "").strip() or None
+        gemini_model = environ.get("GEMINI_MODEL", "gemini-3.6-flash").strip()
         web_search_provider = environ.get("WEB_SEARCH_PROVIDER", "demo").strip().lower()
         tavily_api_key = environ.get("TAVILY_API_KEY", "").strip() or None
 
@@ -73,9 +81,12 @@ class Settings:
             ollama_embedding_model=embedding_model,
             embedding_provider=embedding_provider,
             openai_embedding_model=openai_embedding_model,
+            gemini_embedding_model=gemini_embedding_model,
             embedding_batch_size=embedding_batch_size,
             openai_api_key=openai_key,
             openai_model=openai_model,
+            gemini_api_key=gemini_key,
+            gemini_model=gemini_model,
             web_search_provider=web_search_provider,
             tavily_api_key=tavily_api_key,
             connect_timeout_seconds=connect_timeout,
@@ -98,9 +109,9 @@ class Settings:
     def validate(self, provider: str | None = None) -> None:
         """Validate shared values and the selected provider's configuration."""
         selected = (provider or self.llm_provider).strip().lower()
-        if selected not in {"ollama", "openai"}:
+        if selected not in {"ollama", "openai", "gemini"}:
             raise ConfigurationError(
-                f"Unsupported LLM_PROVIDER {selected!r}; choose 'ollama' or 'openai'."
+                f"Unsupported LLM_PROVIDER {selected!r}; choose 'ollama', 'openai', or 'gemini'."
             )
         for name, value in (
             ("LLM_CONNECT_TIMEOUT_SECONDS", self.connect_timeout_seconds),
@@ -113,28 +124,38 @@ class Settings:
                 raise ConfigurationError("OLLAMA_BASE_URL must not be empty.")
             if not self.ollama_model:
                 raise ConfigurationError("OLLAMA_MODEL must not be empty.")
-        elif not self.openai_model:
+        elif selected == "openai" and not self.openai_model:
             raise ConfigurationError("OPENAI_MODEL must not be empty.")
-        if self.embedding_provider not in {"ollama", "openai"}:
+        elif selected == "gemini" and not self.gemini_model:
+            raise ConfigurationError("GEMINI_MODEL must not be empty.")
+        if self.embedding_provider not in {"ollama", "openai", "gemini"}:
             raise ConfigurationError(
                 f"Unsupported EMBEDDING_PROVIDER {self.embedding_provider!r}; "
-                "choose 'ollama' or 'openai'."
+                "choose 'ollama', 'openai', or 'gemini'."
             )
         selected_embedding_model = (
             self.ollama_embedding_model
             if self.embedding_provider == "ollama"
             else self.openai_embedding_model
+            if self.embedding_provider == "openai"
+            else self.gemini_embedding_model
         )
         selected_embedding_setting = (
             "OLLAMA_EMBEDDING_MODEL"
             if self.embedding_provider == "ollama"
             else "OPENAI_EMBEDDING_MODEL"
+            if self.embedding_provider == "openai"
+            else "GEMINI_EMBEDDING_MODEL"
         )
         if not selected_embedding_model:
             raise ConfigurationError(f"{selected_embedding_setting} must not be empty.")
         if self.embedding_provider == "openai" and not self.openai_api_key:
             raise ConfigurationError(
                 "OPENAI_API_KEY is required when EMBEDDING_PROVIDER is 'openai'."
+            )
+        if self.embedding_provider == "gemini" and not self.gemini_api_key:
+            raise ConfigurationError(
+                "GEMINI_API_KEY is required when EMBEDDING_PROVIDER is 'gemini'."
             )
         if self.embedding_batch_size < 1:
             raise ConfigurationError("OLLAMA_EMBEDDING_BATCH_SIZE must be at least 1.")

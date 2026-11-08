@@ -13,6 +13,7 @@ from agentx.agents.research_agent import ResearchAgent
 from agentx.agents.verification_agent import VerificationAgent
 from agentx.core.router import route_task
 from agentx.core.state import AgentState, RouteName, SourceEvidence
+from agentx.core.settings import Settings
 from agentx.core.supervisor import classify_task
 
 
@@ -195,14 +196,14 @@ def _research_node_factory(research_agent: ResearchAgent):
     return research_node
 
 
-def _knowledge_node_factory(rag_agent: RAGAgent | None):
+def _knowledge_node_factory(rag_agent: RAGAgent | None, settings: Settings | None = None):
     """Create a Knowledge node, initializing its RAG Agent only when used."""
     active_rag_agent = rag_agent
 
     def knowledge_node(state: AgentState) -> dict[str, Any]:
         nonlocal active_rag_agent
         if active_rag_agent is None:
-            active_rag_agent = RAGAgent()
+            active_rag_agent = RAGAgent(settings=settings)
 
         query = state.get("user_query", "")
         document_id = state.get("document_id")
@@ -241,6 +242,7 @@ def _knowledge_node_factory(rag_agent: RAGAgent | None):
 def _combined_node_factory(
     research_agent: ResearchAgent,
     rag_agent: RAGAgent | None,
+    settings: Settings | None = None,
 ):
     """Create a node that runs web research and document QA independently."""
     active_rag_agent = rag_agent
@@ -269,7 +271,7 @@ def _combined_node_factory(
 
         try:
             if active_rag_agent is None:
-                active_rag_agent = RAGAgent()
+                active_rag_agent = RAGAgent(settings=settings)
             rag_answer = active_rag_agent.answer(query, document_id=document_id)
             update.update(_rag_state_update(rag_answer))
             evidence_additions.extend(_document_source_evidence(rag_answer))
@@ -349,6 +351,7 @@ def build_workflow(
     rag_agent: RAGAgent | None = None,
     verification_agent: VerificationAgent | None = None,
     report_generator: ReportGenerator | None = None,
+    settings: Settings | None = None,
 ) -> Any:
     """Build routes with optional research, knowledge, verification, and report agents."""
     active_research_agent = research_agent or ResearchAgent()
@@ -357,9 +360,9 @@ def build_workflow(
     graph = StateGraph(AgentState)
     graph.add_node("supervisor", _supervisor_node)
     graph.add_node("research", _research_node_factory(active_research_agent))
-    graph.add_node("knowledge", _knowledge_node_factory(rag_agent))
+    graph.add_node("knowledge", _knowledge_node_factory(rag_agent, settings))
     graph.add_node(
-        "combined", _combined_node_factory(active_research_agent, rag_agent)
+        "combined", _combined_node_factory(active_research_agent, rag_agent, settings)
     )
     graph.add_node("clarification", _clarification_node)
     graph.add_node("verification", _verification_node_factory(active_verification_agent))

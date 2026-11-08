@@ -73,7 +73,9 @@ def ingest_uploaded_pdf(
         embedding_model=embedding_service.model_name,
     )
     try:
-        stored_count = store.add_chunks(chunks, embedding_service.iter_embeddings(chunks))
+        stored_count = store.replace_document_chunks(
+            document_id, chunks, embedding_service.iter_embeddings(chunks)
+        )
     finally:
         store.close()
     return IngestedDocument(document_id, safe_name, stored_count, path)

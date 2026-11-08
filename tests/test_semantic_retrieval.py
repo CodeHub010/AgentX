@@ -117,6 +117,51 @@ class SemanticRetrieverTests(unittest.TestCase):
             self.query_vector, top_k=5, document_id="doc-42"
         )
 
+    def test_filtered_retrieval_rejects_chunk_from_another_document(self):
+        self.vector_store.query_by_embedding.return_value = [
+            self.stored_chunk(document_id="doc-other")
+        ]
+        with self.assertRaisesRegex(RetrievalStorageError, "restricted to.*doc-42"):
+            self.retriever.retrieve("question", document_id="doc-42")
+        self.vector_store.query_by_embedding.assert_called_once_with(
+            self.query_vector, top_k=5, document_id="doc-42"
+        )
+
+    def test_unfiltered_retrieval_keeps_unfiltered_results(self):
+        self.vector_store.query_by_embedding.return_value = [
+            self.stored_chunk(document_id="doc-any")
+        ]
+        result = self.retriever.retrieve("question")
+        self.assertEqual(result[0].document_id, "doc-any")
+        self.vector_store.query_by_embedding.assert_called_once_with(
+            self.query_vector, top_k=5, document_id=None
+        )
+
+    def test_filtered_retrieval_rejects_provider_or_model_mismatch(self):
+        self.embedding_service.provider = "gemini"
+        self.embedding_service.model_name = "gemini-embedding-001"
+        for provider, model in (
+            ("ollama", "gemini-embedding-001"),
+            ("gemini", "other-model"),
+        ):
+            with self.subTest(provider=provider, model=model):
+                self.vector_store.query_by_embedding.return_value = [
+                    self.stored_chunk(document_id="doc-1")
+                ]
+                # StoredChunk has Ollama identity by default; set the specific
+                # mismatched identity under test while keeping its source fields.
+                match = self.stored_chunk(document_id="doc-1")
+                self.vector_store.query_by_embedding.return_value = [
+                    StoredChunk(
+                        document_id=match.document_id, filename=match.filename,
+                        page_number=match.page_number, chunk_id=match.chunk_id,
+                        text=match.text, embedding=(), distance=match.distance,
+                        embedding_provider=provider, embedding_model=model,
+                    )
+                ]
+                with self.assertRaisesRegex(RetrievalStorageError, "expected gemini/gemini-embedding-001"):
+                    self.retriever.retrieve("question", document_id="doc-1")
+
     def test_empty_question_is_rejected_before_external_calls(self):
         with self.assertRaises(EmptyQuestionError):
             self.retriever.retrieve("  \n")

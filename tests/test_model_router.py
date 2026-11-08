@@ -79,9 +79,9 @@ class ModelRouterTests(unittest.TestCase):
             create_chat_model(settings=settings)
 
     def test_invalid_provider_has_clear_error(self) -> None:
-        with self.assertRaisesRegex(ConfigurationError, "choose 'ollama' or 'openai'"):
+        with self.assertRaisesRegex(ConfigurationError, "choose 'ollama', 'openai', or 'gemini'"):
             Settings.from_env({"LLM_PROVIDER": "anthropic"})
-        with self.assertRaisesRegex(ConfigurationError, "Unsupported LLM_PROVIDER"):
+        with self.assertRaisesRegex(ConfigurationError, "Unsupported provider"):
             create_chat_model("unknown", settings=Settings())
 
 

@@ -74,6 +74,11 @@ def _runtime_settings(settings: Settings | None) -> tuple[Settings, list[str]]:
             "LLM_PROVIDER is 'openai' but OPENAI_API_KEY is not configured. "
             "Set the key or choose LLM_PROVIDER=ollama."
         )
+    if selected.llm_provider == "gemini" and not selected.gemini_api_key:
+        raise EndToEndError(
+            "LLM_PROVIDER is 'gemini' but GEMINI_API_KEY is not configured. "
+            "Set it as an environment variable or a top-level Streamlit secret."
+        )
     return selected, notices
 
 
@@ -152,19 +157,24 @@ def run_end_to_end(
     notify("[1/5] Loading model provider and search configuration...")
     configured, notices = _runtime_settings(settings)
 
-    notify("[2/5] Opening the configured local ChromaDB...")
-    try:
-        embedding_service = create_embedding_service(configured)
-    except Exception as exc:
-        raise EndToEndError(f"Embedding provider configuration failed: {exc}") from exc
-    store = ChromaVectorStore(
-        persist_directory,
-        embedding_provider=embedding_service.provider,
-        embedding_model=embedding_service.model_name,
-    )
     selected_document_id = document_id.strip() if document_id else None
+    embedding_service = None
+    store = None
     try:
         if selected_document_id:
+            notify("[2/5] Opening the configured ChromaDB...")
+            try:
+                embedding_service = create_embedding_service(configured)
+            except Exception as exc:
+                raise EndToEndError(
+                    f"Embedding provider configuration failed ({type(exc).__name__}). "
+                    "Check embedding provider settings and credentials."
+                ) from exc
+            store = ChromaVectorStore(
+                persist_directory,
+                embedding_provider=embedding_service.provider,
+                embedding_model=embedding_service.model_name,
+            )
             try:
                 chunks = store.get_by_document_id(selected_document_id)
             except VectorStoreError as exc:
@@ -195,20 +205,24 @@ def run_end_to_end(
                 settings=configured, search_provider=search_provider
             )
 
-        retriever = SemanticRetriever(
-            embedding_service=embedding_service,
-            vector_store=store,
-            settings=configured,
-            top_k=top_k,
-        )
-        rag_agent = RAGAgent(
-            settings=configured,
-            retriever=retriever,
-            top_k=top_k,
-        )
+        rag_agent = None
+        if embedding_service is not None and store is not None:
+            retriever = SemanticRetriever(
+                embedding_service=embedding_service,
+                vector_store=store,
+                settings=configured,
+                top_k=top_k,
+            )
+            rag_agent = RAGAgent(
+                settings=configured,
+                retriever=retriever,
+                top_k=top_k,
+            )
 
         notify("[3/5] Running Supervisor, route, Research/RAG, and Verification nodes...")
-        workflow = build_workflow(research_agent=research_agent, rag_agent=rag_agent)
+        workflow = build_workflow(
+            research_agent=research_agent, rag_agent=rag_agent, settings=configured
+        )
         state = workflow.invoke(
             {
                 "user_query": question.strip(),
@@ -275,13 +289,14 @@ def run_end_to_end(
             notices=tuple(notices),
         )
     finally:
-        store.close()
+        if store is not None:
+            store.close()
 
 
 def _redact_report_secrets(markdown: str, settings: Settings) -> str:
     """Mask configured credential values if an exception echoed one."""
     safe_markdown = markdown
-    for secret in (settings.tavily_api_key, settings.openai_api_key):
+    for secret in (settings.tavily_api_key, settings.openai_api_key, settings.gemini_api_key):
         if secret:
             safe_markdown = safe_markdown.replace(secret, "[REDACTED]")
     return safe_markdown
@@ -296,11 +311,8 @@ def _notify_runtime_errors(
         return
     for error in errors:
         text = str(error).casefold()
-        if any(token in text for token in ("ollama", "connection", "timeout", "model")):
-            notify(
-                "Local model warning: Ollama inference may have failed. Confirm Ollama is running "
-                f"at {settings.ollama_base_url} and model {settings.ollama_model} is available."
-            )
+        if any(token in text for token in ("ollama", "connection", "timeout", "model", "gemini", "openai")):
+            notify("Model provider warning: check the selected provider, credentials, quota, model name, and connectivity.")
         elif "tavily" in text or "search" in text:
             notify("Search warning: the configured search request did not complete successfully.")
         elif any(token in text for token in ("vector", "retriev", "pdf", "collection")):

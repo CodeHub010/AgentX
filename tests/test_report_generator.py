@@ -44,6 +44,30 @@ class ReportGeneratorTests(unittest.TestCase):
         self.assertIn("> CNN detects threats in network traffic.", result.markdown)
         self.assertIn("similarity 0.91", result.markdown)
 
+    def test_multi_claim_document_answer_uses_claim_level_verification_status(self):
+        result = self.generator.generate({
+            "rag_answer": "| Filters: 64 [1] |\n| Kernel Size: 3 [2] |",
+            "verification_status": "supported",
+            "verification_results": [
+                {"claim": "| Filters: 64 [1] |", "status": "supported"},
+                {"claim": "| Kernel Size: 3 [2] |", "status": "supported"},
+            ],
+            "source_evidence": [],
+        })
+        self.assertIn("Document QA response (verification status: supported)", result.markdown)
+        self.assertNotIn("verification unavailable", result.markdown)
+
+    def test_document_answer_status_summarizes_concerns_before_supported(self):
+        result = self.generator.generate({
+            "rag_answer": "Filters: 64. Kernel Size: 3.",
+            "verification_status": "insufficient_evidence",
+            "verification_results": [
+                {"claim": "Filters: 64.", "status": "supported"},
+                {"claim": "Kernel Size: 3.", "status": "insufficient_evidence"},
+            ],
+        })
+        self.assertIn("Document QA response (verification status: insufficient_evidence)", result.markdown)
+
     def test_combined_report_preserves_both_sources_and_verification_statuses(self):
         result = self.generator.generate({
             "user_query": "Compare web and PDF results",

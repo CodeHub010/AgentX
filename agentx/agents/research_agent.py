@@ -112,6 +112,8 @@ class ResearchAgent:
                     settings.ollama_model
                     if settings.llm_provider == "ollama"
                     else settings.openai_model
+                    if settings.llm_provider == "openai"
+                    else settings.gemini_model
                 ),
                 status="no_sources",
             )
@@ -129,7 +131,7 @@ class ResearchAgent:
             raise ResearchLLMError(
                 f"Research synthesis failed using {settings.llm_provider} "
                 f"({type(exc).__name__}). Check model connectivity and configuration."
-            ) from exc
+            ) from None
 
         return ResearchAnswer(
             question=question.strip(),
@@ -142,6 +144,8 @@ class ResearchAgent:
                 settings.ollama_model
                 if settings.llm_provider == "ollama"
                 else settings.openai_model
+                if settings.llm_provider == "openai"
+                else settings.gemini_model
             ),
         )
 

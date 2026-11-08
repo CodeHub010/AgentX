@@ -95,6 +95,26 @@ class EndToEndRunnerTests(unittest.TestCase):
             self.assertEqual(result.state["route"], "research")
             rag.answer.assert_not_called()
 
+    def test_web_only_run_does_not_initialize_embeddings_or_chroma(self):
+        research = Mock()
+        research.research.return_value = _research_answer()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with (
+                patch("agentx.core.end_to_end.ChromaVectorStore") as store_factory,
+                patch("agentx.core.end_to_end.create_embedding_service") as embedding_factory,
+                patch("agentx.core.end_to_end.ResearchAgent", return_value=research),
+                patch("agentx.core.end_to_end.create_web_search_provider"),
+            ):
+                result = run_end_to_end(
+                    "Research recent CNN-LSTM methods online.",
+                    settings=self.settings,
+                    report_output_dir=temp_dir,
+                    progress=None,
+                )
+        self.assertEqual(result.state["route"], "research")
+        embedding_factory.assert_not_called()
+        store_factory.assert_not_called()
+
     def test_document_only_mode_forwards_document_and_skips_research(self):
         research, rag = Mock(), Mock()
         rag.answer.return_value = _rag_answer()
@@ -167,7 +187,7 @@ class EndToEndRunnerTests(unittest.TestCase):
                     report_output_dir=temp_dir, progress=None,
                 )
             self.assertEqual(research_factory.call_args.kwargs["settings"].llm_provider, "ollama")
-            self.assertEqual(rag_factory.call_args.kwargs["settings"].llm_provider, "ollama")
+            rag_factory.assert_not_called()
 
     def test_openai_provider_is_forwarded_to_both_chat_agents(self):
         research, rag = Mock(), Mock()

@@ -140,8 +140,25 @@ class SemanticRetriever:
         except VectorStoreError as exc:
             raise RetrievalStorageError(f"ChromaDB retrieval failed: {exc}") from exc
 
-        return [
-            RetrievedChunk(
+        expected_identity = self._expected_embedding_identity()
+        results: list[RetrievedChunk] = []
+        for match in matches:
+            if document_id is not None and match.document_id != document_id:
+                raise RetrievalStorageError(
+                    "ChromaDB returned a passage for document "
+                    f"{match.document_id!r} while retrieval was restricted to "
+                    f"{document_id!r}. The result was rejected."
+                )
+            if expected_identity is not None and (
+                match.embedding_provider,
+                match.embedding_model,
+            ) != expected_identity:
+                raise RetrievalStorageError(
+                    "ChromaDB returned a passage embedded with "
+                    f"{match.embedding_provider}/{match.embedding_model}; "
+                    f"expected {expected_identity[0]}/{expected_identity[1]}."
+                )
+            results.append(RetrievedChunk(
                 text=match.text,
                 document_id=match.document_id,
                 filename=match.filename,
@@ -149,9 +166,26 @@ class SemanticRetriever:
                 chunk_id=match.chunk_id,
                 distance=match.distance,
                 similarity=match.similarity,
-            )
-            for match in matches
-        ]
+            ))
+        return results
+
+    def _expected_embedding_identity(self) -> tuple[str, str] | None:
+        """Return configured provider/model identity when both are available."""
+        provider = getattr(self.embedding_service, "provider", None)
+        model = getattr(self.embedding_service, "model_name", None)
+        if (
+            isinstance(provider, str) and provider.strip()
+            and isinstance(model, str) and model.strip()
+        ):
+            return provider.strip(), model.strip()
+        provider = getattr(self.vector_store, "embedding_provider", None)
+        model = getattr(self.vector_store, "embedding_model", None)
+        if (
+            isinstance(provider, str) and provider.strip()
+            and isinstance(model, str) and model.strip()
+        ):
+            return provider.strip(), model.strip()
+        return None
 
     @staticmethod
     def _validate_top_k(top_k: int) -> None:

@@ -116,7 +116,10 @@ class RAGAgent:
                 answer="I could not generate an answer because the language model failed.",
                 sources=sources,
                 status="error",
-                error_message=f"LLM request failed ({type(exc).__name__}): {exc}",
+                error_message=(
+                    f"LLM request failed ({type(exc).__name__}). "
+                    "Check the configured provider credentials, quota, and model settings."
+                ),
             )
 
         status = "success"
@@ -160,12 +163,23 @@ class RAGAgent:
             for source, passage in zip(sources, passages)
         )
         return (
-            "You are AgentX, a PDF research assistant. Answer the question using "
-            "only the evidence passages below. Do not use outside knowledge or "
-            "invent facts, quotations, citations, filenames, pages, or document IDs. "
-            "Cite each factual claim with the matching bracketed evidence number, "
-            "for example [1]. If the passages do not support an answer, reply with "
-            "the exact prefix INSUFFICIENT_EVIDENCE: followed by a brief explanation.\n\n"
+            "You are AgentX, a PDF research assistant. Answer the user's question "
+            "directly using only the evidence passages below as factual sources. "
+            "Synthesize all relevant retrieved passages, and give enough detail to "
+            "answer the question without omitting relevant specifics. For questions "
+            "about a model or architecture, include the stated component order, data "
+            "flow, and any available layer configurations such as layer types, units, "
+            "filters, kernel sizes, activations, or dropout. Include only details "
+            "explicitly present in the passages; never infer or invent a missing "
+            "configuration. If a requested detail is not stated, say so clearly.\n\n"
+            "Cite every factual claim using its matching evidence number and page, "
+            "in this format: [1] (page 12). Use only the number and page shown for "
+            "that passage; do not invent citations, filenames, pages, document IDs, "
+            "facts, or quotations. If no retrieved passage supports the core answer, "
+            "reply with the exact prefix INSUFFICIENT_EVIDENCE: followed by a clear "
+            "statement that the retrieved evidence is insufficient. If the evidence "
+            "supports only part of the question, answer that part and identify what "
+            "the passages do not establish.\n\n"
             f"Question: {question}\n\nEvidence:\n{evidence}"
         )
 

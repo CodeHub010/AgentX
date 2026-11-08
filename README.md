@@ -29,7 +29,7 @@ AgentX brings those steps into a single workflow. It keeps retrieved web snippet
 - **Automated report generation:** deterministic Markdown assembly using findings and original source metadata.
 - **PDF export:** renders the generated Markdown report through ReportLab.
 - **Streamlit dashboard:** upload documents, select a research mode, inspect results, and download the report.
-- **Local-first model use:** Ollama chat and embeddings are the defaults and work without a cloud API key. OpenAI embeddings are optional. Models are never downloaded automatically by AgentX.
+- **Local-first model use:** Ollama chat and embeddings remain the defaults and work without a cloud API key. OpenAI and Google Gemini are optional hosted providers. Models are never downloaded automatically by AgentX.
 
 ## Architecture
 
@@ -56,7 +56,7 @@ flowchart TD
     REPORT --> MD[Markdown report]
     MD --> PDFOUT[PDFReportExporter]
     PDFOUT --> UI
-    WEB -. local chat .-> LLM[LLM Gateway / Ollama]
+    WEB -. configured chat .-> LLM[LLM Gateway / Ollama, OpenAI, or Gemini]
     RAG -. local chat .-> LLM
 ```
 
@@ -79,7 +79,7 @@ The Combined workflow invokes the Research and Knowledge agents with the same qu
 - Python 3.11 or 3.12
 - LangChain and LangGraph
 - Ollama with `llama3.2:1b` for chat and `nomic-embed-text` for embeddings by default
-- Optional OpenAI provider in the shared LLM Gateway and embedding service
+- Optional OpenAI and Google Gemini providers in the shared LLM Gateway and embedding service
 - ChromaDB for persistent local document vectors
 - PyMuPDF for PDF text extraction
 - ReportLab for PDF report export
@@ -87,7 +87,7 @@ The Combined workflow invokes the Research and Knowledge agents with the same qu
 - `httpx` for local embedding and Tavily HTTP calls
 - Standard-library `unittest` for automated tests
 
-The end-to-end runner uses `LLM_PROVIDER` for chat selection and `EMBEDDING_PROVIDER` for document and query embeddings. Both default to `ollama`; `openai` requires `OPENAI_API_KEY`. `OLLAMA_EMBEDDING_MODEL` and `OPENAI_EMBEDDING_MODEL` select each provider's embedding model. Ingestion and retrieval use the same configured service and model identity. ChromaDB stores provider/model metadata and isolates non-default provider/model pairs into separate collections, so Ollama vectors are never silently reused as OpenAI vectors. Existing data in the default `agentx_pdf_chunks` collection remains available for `ollama` with `nomic-embed-text`.
+The end-to-end runner uses `LLM_PROVIDER` for chat selection and `EMBEDDING_PROVIDER` for document and query embeddings. Both default to `ollama`; OpenAI requires `OPENAI_API_KEY`, while Gemini requires `GEMINI_API_KEY`. `OLLAMA_EMBEDDING_MODEL`, `OPENAI_EMBEDDING_MODEL`, and `GEMINI_EMBEDDING_MODEL` select each provider's embedding model. Ingestion and retrieval use the same configured service and model identity. ChromaDB stores provider/model metadata and isolates non-default provider/model pairs into separate collections, so vectors from one provider/model are never silently reused by another. Existing data in the default `agentx_pdf_chunks` collection remains available for `ollama` with `nomic-embed-text`.
 
 ## Repository structure
 
@@ -153,13 +153,16 @@ AgentX uses the chat model for synthesis and the configured embedding model for 
 
 | Variable | Purpose | Default in template |
 |---|---|---|
-| `LLM_PROVIDER` | Shared gateway default: `ollama` or `openai` | `ollama` |
+| `LLM_PROVIDER` | Shared gateway provider: `ollama`, `openai`, or `gemini` | `ollama` |
 | `OLLAMA_BASE_URL` | Local Ollama endpoint | `http://localhost:11434` |
 | `OLLAMA_MODEL` | Chat model | `llama3.2:1b` |
 | `OLLAMA_EMBEDDING_MODEL` | Local Ollama PDF/query embedding model | `nomic-embed-text` |
 | `OLLAMA_EMBEDDING_BATCH_SIZE` | Embedding batch size | `8` |
-| `EMBEDDING_PROVIDER` | Embedding provider: `ollama` or `openai` | `ollama` |
+| `EMBEDDING_PROVIDER` | Embedding provider: `ollama`, `openai`, or `gemini` | `ollama` |
 | `OPENAI_EMBEDDING_MODEL` | Hosted OpenAI PDF/query embedding model | `text-embedding-3-small` |
+| `GEMINI_API_KEY` | Required when chat or embeddings select Gemini | blank |
+| `GEMINI_MODEL` | Gemini chat model | `gemini-3.6-flash` |
+| `GEMINI_EMBEDDING_MODEL` | Gemini PDF/query embedding model | `gemini-embedding-001` |
 | `LLM_CONNECT_TIMEOUT_SECONDS` | Connection timeout | `10` |
 | `LLM_REQUEST_TIMEOUT_SECONDS` | Request timeout | `120` |
 | `WEB_SEARCH_PROVIDER` | `demo` or `tavily` | `demo` |
@@ -169,6 +172,8 @@ AgentX uses the chat model for synthesis and the configured embedding model for 
 | `SQLITE_PATH` | Reserved application setting | `./data/agentx.sqlite3` |
 
 Demo web search is the default. Set `WEB_SEARCH_PROVIDER=tavily` and provide your own `TAVILY_API_KEY` to request live search. The application labels demo search output as demo data. Live search is not claimed unless a configured request has actually succeeded.
+
+For a hosted Gemini setup, set `LLM_PROVIDER=gemini`, `EMBEDDING_PROVIDER=gemini`, and provide `GEMINI_API_KEY`. `GEMINI_MODEL` selects chat and `GEMINI_EMBEDDING_MODEL` selects the shared upload/query embedding model. In Streamlit Community Cloud, enter these as top-level secrets (for example `GEMINI_API_KEY = "..."`); Streamlit exposes top-level secrets through environment variables. Keep `.streamlit/secrets.toml` local and untracked. Local ChromaDB and uploaded files are not guaranteed to persist on Community Cloud, so users may need to upload documents again after an app restart.
 
 ## Launch the Streamlit dashboard
 

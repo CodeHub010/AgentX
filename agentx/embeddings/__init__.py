@@ -15,6 +15,7 @@ from .ollama_embeddings import (
     OllamaEmbeddingService,
 )
 from .openai_embeddings import OpenAIEmbeddingService
+from .gemini_embeddings import GeminiEmbeddingService
 from .provider import EmbeddingService, create_embedding_service
 
 __all__ = [
@@ -31,6 +32,9 @@ __all__ = [
     "MalformedEmbeddingResponseError",
     "OllamaEmbeddingService",
     "OpenAIEmbeddingService",
+    "GeminiEmbeddingService",
     "EmbeddingService",
     "create_embedding_service",
 ]
+
+

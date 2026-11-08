@@ -44,6 +44,16 @@ def _load_chat_openai() -> type:
     return ChatOpenAI
 
 
+def _load_chat_gemini() -> type:
+    try:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+    except ImportError as exc:
+        raise ModelConfigurationError(
+            "Gemini support is unavailable. Install langchain-google-genai from requirements.txt."
+        ) from exc
+    return ChatGoogleGenerativeAI
+
+
 def _build_timeout(settings: Settings) -> Any:
     """Create explicit connect and total request deadlines."""
     try:
@@ -70,10 +80,9 @@ def create_chat_model(
     """
     configured = settings or Settings.from_env()
     selected = (provider or configured.llm_provider).strip().lower()
-    configured.validate(provider=selected)
-    if selected not in {"ollama", "openai"}:
+    if selected not in {"ollama", "openai", "gemini"}:
         raise ModelConfigurationError(
-            f"Unsupported provider {selected!r}; choose 'ollama' or 'openai'."
+            f"Unsupported provider {selected!r}; choose 'ollama', 'openai', or 'gemini'."
         )
 
     if selected == "openai" and not configured.openai_api_key:
@@ -81,6 +90,12 @@ def create_chat_model(
             "OPENAI_API_KEY is required when LLM_PROVIDER is 'openai'. "
             "Set the key in your environment or switch to LLM_PROVIDER=ollama."
         )
+    if selected == "gemini" and not configured.gemini_api_key:
+        raise ModelConfigurationError(
+            "GEMINI_API_KEY is required when LLM_PROVIDER is 'gemini'. "
+            "Set it as an environment variable or a top-level Streamlit secret."
+        )
+    configured.validate(provider=selected)
 
     timeout = _build_timeout(configured)
     if selected == "ollama":
@@ -92,6 +107,21 @@ def create_chat_model(
             client_kwargs={"timeout": timeout},
             async_client_kwargs={"timeout": timeout},
         )
+
+    if selected == "gemini":
+        model_class = _load_chat_gemini()
+        try:
+            return model_class(
+                model=configured.gemini_model,
+                api_key=configured.gemini_api_key,
+                timeout=configured.request_timeout_seconds,
+                max_retries=2,
+            )
+        except Exception as exc:
+            raise ModelConfigurationError(
+                f"Gemini chat client could not be initialized ({type(exc).__name__}). "
+                "Check GEMINI_MODEL and provider configuration."
+            ) from None
 
     model_class = _load_chat_openai()
     return model_class(

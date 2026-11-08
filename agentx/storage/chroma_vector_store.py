@@ -77,7 +77,7 @@ class ChromaVectorStore:
             raise VectorStoreConfigurationError("collection_name must not be empty.")
         if batch_size < 1:
             raise VectorStoreConfigurationError("batch_size must be at least 1.")
-        if embedding_provider not in {"ollama", "openai"}:
+        if embedding_provider not in {"ollama", "openai", "gemini"}:
             raise VectorStoreConfigurationError("Unsupported embedding provider.")
         if not embedding_model or not embedding_model.strip():
             raise VectorStoreConfigurationError("embedding_model must not be empty.")
@@ -245,6 +245,88 @@ class ChromaVectorStore:
             if len(batch_chunks) >= self.batch_size:
                 written += flush()
         written += flush()
+        return written
+
+    def replace_document_chunks(
+        self,
+        document_id: str,
+        chunks: Iterable[PDFChunk],
+        embeddings: Iterable[EmbeddedChunk],
+    ) -> int:
+        """Upsert a document's chunks, then remove its obsolete chunk IDs.
+
+        Cleanup is deferred until ``add_chunks`` has consumed and stored every
+        new chunk and embedding. Existing data is scoped to this document and
+        this provider/model collection; ordinary ``add_chunks`` remains an
+        upsert-only operation.
+        """
+        if not isinstance(document_id, str) or not document_id.strip():
+            raise VectorStoreConfigurationError("document_id must not be empty.")
+        document_id = document_id.strip()
+        new_chunks = list(chunks)
+        if not new_chunks:
+            raise VectorStoreConfigurationError(
+                "Document replacement requires at least one new chunk; no data was changed."
+            )
+        if any(
+            not isinstance(chunk, PDFChunk) or chunk.document_id != document_id
+            for chunk in new_chunks
+        ):
+            raise VectorStoreConfigurationError(
+                "Every replacement chunk must belong to the specified document_id."
+            )
+
+        collection = self._get_collection()
+        try:
+            existing = collection.get(
+                where={"document_id": document_id}, include=["metadatas"]
+            )
+            existing_ids = existing.get("ids") or []
+            existing_metadata = existing.get("metadatas") or []
+            if len(existing_ids) != len(existing_metadata):
+                raise VectorStoreDatabaseError(
+                    "ChromaDB returned misaligned document IDs and metadata during replacement."
+                )
+            old_ids = {
+                chunk_id for chunk_id, metadata in zip(existing_ids, existing_metadata)
+                if isinstance(metadata, dict) and metadata.get("document_id") == document_id
+            }
+
+            # Chroma IDs are collection-global. Refuse to overwrite a colliding
+            # chunk ID if its current record belongs to another document.
+            new_ids = [chunk.chunk_id for chunk in new_chunks]
+            collisions = collection.get(ids=new_ids, include=["metadatas"])
+            collision_ids = collisions.get("ids") or []
+            collision_metadata = collisions.get("metadatas") or []
+            if len(collision_ids) != len(collision_metadata):
+                raise VectorStoreDatabaseError(
+                    "ChromaDB returned misaligned collision-check metadata."
+                )
+            for chunk_id, metadata in zip(collision_ids, collision_metadata):
+                if not isinstance(metadata, dict) or metadata.get("document_id") != document_id:
+                    raise VectorStoreConfigurationError(
+                        f"Chunk ID {chunk_id!r} already exists with unknown or different document ownership."
+                    )
+        except VectorStoreError:
+            raise
+        except Exception as exc:
+            raise VectorStoreDatabaseError(
+                f"ChromaDB could not inspect document {document_id!r} for replacement: {exc}"
+            ) from exc
+
+        # Any embedding or upsert exception exits before deletion is attempted.
+        written = self.add_chunks(new_chunks, embeddings)
+        obsolete_ids = sorted(old_ids.difference(new_ids))
+        if obsolete_ids:
+            try:
+                collection.delete(
+                    ids=obsolete_ids, where={"document_id": document_id}
+                )
+            except Exception as exc:
+                raise VectorStoreDatabaseError(
+                    f"New chunks were stored, but obsolete chunks for document "
+                    f"{document_id!r} could not be removed: {exc}"
+                ) from exc
         return written
 
     def get_by_document_id(self, document_id: str) -> list[StoredChunk]:
