@@ -1,3 +1,10 @@
+# 🚀 AgentX — AI Research Intelligence Platform
+
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Launch%20AgentX-success?style=for-the-badge)](https://agentx-dxulc4ymi5cvkcz8y9emh6.streamlit.app/)
+
+[![GitHub](https://img.shields.io/badge/GitHub-Source%20Code-black?style=for-the-badge&logo=github)](https://github.com/CodeHub010/AgentX)
+
+An AI-powered multi-agent research assistant that combines web research, PDF analysis, RAG, evidence verification, and automated report generation.
 # AgentX — Autonomous AI Research & Intelligence Platform
 
 AgentX is a local-first research assistant that combines web-source synthesis and question answering over uploaded PDFs in one evidence-aware workflow. A Streamlit dashboard lets users submit a question, inspect the retrieved evidence and verification results, and download a generated Markdown report as PDF.
